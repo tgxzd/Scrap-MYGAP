@@ -5,3 +5,4 @@ lxml
 schedule
 pyautogui
 fastapi
+uvicorn
