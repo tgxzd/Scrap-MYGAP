@@ -4,3 +4,4 @@ selenium
 lxml
 schedule
 pyautogui
+fastapi
