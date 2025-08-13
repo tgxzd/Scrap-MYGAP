@@ -20,7 +20,7 @@ DATA_FIELDS = [
     'tempoh_sah_laku'     # Expiry Date
 ]
 
-def extract_mygap_data():
+def extract_mygap_data(save_to_file=True):
     """Extract all available data from MyGAP certification table"""
     print("Fetching data from MyGAP website...")
     
@@ -109,6 +109,11 @@ def extract_mygap_data():
             extracted_data.append(row_data)
     
     print(f"\nExtracted {len(extracted_data)} records")
+    
+    # Automatically save to file if requested (default behavior)
+    if save_to_file and extracted_data:
+        save_data(extracted_data, format='json')
+    
     return extracted_data
 
 def save_data(data, format='both'):
@@ -129,8 +134,20 @@ def save_data(data, format='both'):
     
     if format in ['json', 'both']:
         json_filename = f"mygap_data_{timestamp}.json"
+        
+        # Create structured JSON with metadata
+        json_data = {
+            "metadata": {
+                "extracted_at": datetime.now().isoformat(),
+                "timestamp": timestamp,
+                "total_records": len(data),
+                "fields": DATA_FIELDS
+            },
+            "data": data
+        }
+        
         with open(json_filename, 'w', encoding='utf-8') as jsonfile:
-            json.dump(data, jsonfile, indent=2, ensure_ascii=False)
+            json.dump(json_data, jsonfile, indent=2, ensure_ascii=False)
         print(f"Data saved to {json_filename}")
 
 def display_sample_data(data, num_samples=5):

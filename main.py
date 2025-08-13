@@ -3,8 +3,10 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
+import os
+import glob
 
 # Import our scraping functions
 from scrap import extract_mygap_data, DATA_FIELDS
@@ -72,23 +74,57 @@ async def root():
 @app.get("/mygap/data", response_model=MyGAPResponse)
 async def get_mygap_data():
     """
-    Fetch all MyGAP certification data from the official website
+    Fetch MyGAP certification data - reads from JSON file first, 
+    only fetches new data if file is older than 1 day
     
     Returns:
         MyGAPResponse: Complete dataset with all certification records
     """
     try:
-        logger.info("Starting MyGAP data extraction...")
+        # First try to read from existing JSON file
+        raw_data = None
+        data_source = "cache"
         
-        # Extract data using our scraping function
-        raw_data = extract_mygap_data()
+        # Find the most recent JSON file
+        json_files = glob.glob("mygap_data_*.json")
+        if json_files:
+            # Sort by modification time, get the newest
+            latest_file = max(json_files, key=os.path.getmtime)
+            file_mtime = datetime.fromtimestamp(os.path.getmtime(latest_file))
+            file_age = datetime.now() - file_mtime
+            
+            logger.info(f"Found existing file: {latest_file}, age: {file_age}")
+            
+            # If file is less than 1 day old, read from it
+            if file_age < timedelta(days=1):
+                try:
+                    with open(latest_file, 'r', encoding='utf-8') as f:
+                        file_data = json.load(f)
+                        if isinstance(file_data, list):
+                            raw_data = file_data
+                        elif isinstance(file_data, dict) and 'data' in file_data:
+                            raw_data = file_data['data']
+                        else:
+                            raw_data = file_data
+                    logger.info(f"Successfully loaded {len(raw_data) if raw_data else 0} records from cache")
+                except Exception as e:
+                    logger.warning(f"Failed to read from cache file: {str(e)}")
+                    raw_data = None
+            else:
+                logger.info(f"File is older than 1 day ({file_age}), fetching fresh data")
         
+        # If no valid cached data, extract from website
         if raw_data is None:
-            logger.error("Failed to extract data from MyGAP website")
-            raise HTTPException(
-                status_code=500, 
-                detail="Failed to extract data from MyGAP website. The website might be unavailable."
-            )
+            logger.info("Fetching fresh data from MyGAP website...")
+            raw_data = extract_mygap_data(save_to_file=True)  # Save fresh data to file
+            data_source = "fresh"
+            
+            if raw_data is None:
+                logger.error("Failed to extract data from MyGAP website")
+                raise HTTPException(
+                    status_code=500, 
+                    detail="Failed to extract data from MyGAP website. The website might be unavailable."
+                )
         
         # Convert raw data to Pydantic models
         records = []
@@ -96,19 +132,20 @@ async def get_mygap_data():
             record = MyGAPRecord(**item)
             records.append(record)
         
+        message = f"Successfully loaded {len(records)} MyGAP certification records from {data_source}"
         response = MyGAPResponse(
             success=True,
-            message=f"Successfully extracted {len(records)} MyGAP certification records",
+            message=message,
             total_records=len(records),
             timestamp=datetime.now().isoformat(),
             data=records
         )
         
-        logger.info(f"Successfully extracted {len(records)} records")
+        logger.info(message)
         return response
         
     except Exception as e:
-        logger.error(f"Error extracting MyGAP data: {str(e)}")
+        logger.error(f"Error loading MyGAP data: {str(e)}")
         raise HTTPException(
             status_code=500, 
             detail=f"Internal server error: {str(e)}"
@@ -126,7 +163,7 @@ async def get_mygap_stats():
         logger.info("Extracting MyGAP data for statistics...")
         
         # Extract data using our scraping function
-        raw_data = extract_mygap_data()
+        raw_data = extract_mygap_data(save_to_file=False)
         
         if raw_data is None:
             logger.error("Failed to extract data from MyGAP website")
@@ -181,7 +218,7 @@ async def download_json():
         logger.info("Preparing JSON download...")
         
         # Extract data
-        raw_data = extract_mygap_data()
+        raw_data = extract_mygap_data(save_to_file=False)
         
         if raw_data is None:
             raise HTTPException(
