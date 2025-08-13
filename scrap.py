@@ -195,3 +195,7 @@ if __name__ == "__main__":
             print(f"  {field}: {count}/{len(mygap_data)} ({percentage:.1f}%)")
     else:
         print("Failed to extract data") 
+
+# 13.8.2025
+# Task 1 - Remove last column due to empty data
+# Task 2 - Add selenium for headless browser
