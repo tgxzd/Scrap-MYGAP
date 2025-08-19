@@ -1,8 +1,16 @@
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
 import csv
 import json
 from datetime import datetime
+import time
+import re
+from urllib.parse import urljoin, parse_qs, urlparse
+import html
+from concurrent.futures import ThreadPoolExecutor
+import threading
 
 # Define the data fields we want to extract
 DATA_FIELDS = [
@@ -20,12 +28,144 @@ DATA_FIELDS = [
     'tempoh_sah_laku'     # Expiry Date
 ]
 
-def extract_mygap_pf_data(save_to_file=True):
-    """Extract all available data from MyGAP certification table"""
-    print("Fetching data from MyGAP website...")
+def create_optimized_session():
+    """Create an optimized session with connection pooling and retry strategy"""
+    session = requests.Session()
     
-    # 1. Get the page
-    response = requests.get('https://carianmygapmyorganic.doa.gov.my/mygap_pf_list.php?pagesize=500')
+    # Configure retry strategy
+    retry_strategy = Retry(
+        total=3,
+        backoff_factor=0.3,
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["HEAD", "GET", "OPTIONS"]
+    )
+    
+    # Configure HTTP adapter with connection pooling
+    adapter = HTTPAdapter(
+        max_retries=retry_strategy,
+        pool_connections=10,  # Number of connection pools to cache
+        pool_maxsize=20,      # Maximum number of connections to save in pool
+        pool_block=True       # Block when no free connections available
+    )
+    
+    # Mount adapter for both HTTP and HTTPS
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    
+    # Set common headers to appear more like a regular browser
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+    })
+    
+    return session
+
+def batch_fetch_full_content(session, dialog_requests, base_url, max_workers=5):
+    """Fetch multiple dialog contents in parallel with controlled concurrency"""
+    results = {}
+    
+    def fetch_single_dialog(request_info):
+        """Helper function for threading"""
+        field, url, row_index = request_info
+        try:
+            content = get_full_text_from_dialog(session, url, base_url)
+            return (row_index, field, content)
+        except Exception as e:
+            print(f"  Error in batch fetch for {field}: {str(e)}")
+            return (row_index, field, None)
+    
+    if not dialog_requests:
+        return results
+    
+    print(f"  Batch fetching {len(dialog_requests)} dialog contents with {max_workers} workers...")
+    
+    # Use ThreadPoolExecutor for controlled parallel requests
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all requests
+        future_to_request = {
+            executor.submit(fetch_single_dialog, req): req 
+            for req in dialog_requests
+        }
+        
+        # Collect results as they complete
+        for future in future_to_request:
+            try:
+                row_index, field, content = future.result(timeout=30)  # 30 second timeout per request
+                if content:
+                    if row_index not in results:
+                        results[row_index] = {}
+                    results[row_index][field] = content
+            except Exception as e:
+                request_info = future_to_request[future]
+                print(f"  Batch request failed for {request_info}: {str(e)}")
+    
+    print(f"  Batch fetch completed. Retrieved {len(results)} full contents.")
+    return results
+
+def get_full_text_from_dialog(session, more_link_url, base_url):
+    """Extract full text from the dialog modal when 'More ...' is clicked"""
+    try:
+        # Construct the full URL for the dialog content
+        if more_link_url.startswith('fulltext.php'):
+            full_url = urljoin(base_url, more_link_url)
+        else:
+            full_url = more_link_url
+            
+        print(f"  Fetching full content from: {full_url}")
+        
+        # Removed unnecessary delay - using persistent session instead
+        
+        response = session.get(full_url, timeout=10)  # Add timeout
+        if response.status_code == 200:
+            try:
+                # The response is HTML-encoded JSON format: {"success":true,"textCont":"FULL_CONTENT"}
+                # First decode HTML entities
+                decoded_content = html.unescape(response.text)
+                json_response = json.loads(decoded_content)
+                if json_response.get('success') and 'textCont' in json_response:
+                    content = json_response['textCont']
+                    # Clean up HTML tags and entities
+                    content = re.sub(r'<br\s*/?>', ', ', content)  # Replace <br> with commas
+                    content = re.sub(r'<[^>]+>', '', content)      # Remove any other HTML tags
+                    content = content.replace('\\n', ', ').replace('\n', ', ')  # Replace newlines
+                    content = re.sub(r',\s*,', ',', content)       # Remove duplicate commas
+                    content = re.sub(r',\s*$', '', content)        # Remove trailing comma
+                    content = content.strip()
+                    return content
+                else:
+                    print(f"  Unexpected JSON structure: {json_response}")
+                    return None
+            except json.JSONDecodeError:
+                # Fallback to HTML parsing if not JSON
+                dialog_soup = BeautifulSoup(response.content, 'html.parser')
+                modal_body = dialog_soup.find('div', class_='modal-body')
+                if modal_body:
+                    return modal_body.get_text(strip=True)
+                else:
+                    body_text = dialog_soup.get_text(strip=True)
+                    return body_text
+        else:
+            print(f"  Failed to fetch dialog content: {response.status_code}")
+            return None
+            
+    except Exception as e:
+        print(f"  Error fetching dialog content: {str(e)}")
+        return None
+
+def extract_mygap_pf_data(save_to_file=True):
+    """Extract all available data from MyGAP certification table with optimized session handling"""
+    print("Fetching data from MyGAP website with optimized session...")
+    
+    # Create optimized session with connection pooling and retry strategy
+    session = create_optimized_session()
+    base_url = 'https://carianmygapmyorganic.doa.gov.my/'
+    
+    # 1. Get the page with pagesize=-1 to get all records
+    response = session.get('https://carianmygapmyorganic.doa.gov.my/mygap_pf_list.php?pagesize=-1')
     
     if response.status_code != 200:
         print(f"Error fetching page: {response.status_code}")
@@ -79,10 +219,13 @@ def extract_mygap_pf_data(save_to_file=True):
     for field in field_to_col_map:
         print(f"  - {field}")
     
-    # Extract data from all rows after the header
+    # Phase 1: Extract basic data and collect "More..." requests
     extracted_data = []
+    dialog_requests = []  # [(field, url, row_index), ...]
     
-    for row in rows[header_row_index + 1:]:
+    print("Phase 1: Extracting basic data and identifying truncated fields...")
+    
+    for row_index, row in enumerate(rows[header_row_index + 1:]):
         cells = row.find_all(['th', 'td'])
         if len(cells) == 0:
             continue
@@ -95,7 +238,25 @@ def extract_mygap_pf_data(save_to_file=True):
             if field in field_to_col_map:
                 col_index = field_to_col_map[field]
                 if len(cells) > col_index:
-                    cell_data = cells[col_index].get_text(strip=True)
+                    cell = cells[col_index]
+                    cell_data = cell.get_text(strip=True)
+                    
+                    # Check if this cell contains a "More ..." link for truncated content
+                    if 'More' in cell_data and '...' in cell_data:
+                        # Look for the "More ..." link in the cell with data-query attribute
+                        more_link = cell.find('a', attrs={'data-query': re.compile(r'fulltext\.php')})
+                        if more_link:
+                            # Extract the URL from data-query attribute or href
+                            query_url = more_link.get('data-query') or more_link.get('href')
+                            if query_url and query_url != 'javascript:void(0);':
+                                # Add to batch requests instead of fetching immediately
+                                dialog_requests.append((field, query_url, row_index))
+                        else:
+                            # Try to clean up the "More ..." suffix for better data quality
+                            cell_data = re.sub(r'More\s*\.+$', '', cell_data).strip()
+                            if cell_data.endswith(','):
+                                cell_data = cell_data[:-1].strip()
+                    
                     row_data[field] = cell_data
                     if cell_data:  # Check if there's actual data
                         has_data = True
@@ -107,6 +268,25 @@ def extract_mygap_pf_data(save_to_file=True):
         # Only add rows that have at least some data
         if has_data:
             extracted_data.append(row_data)
+    
+    print(f"Phase 1 complete: {len(extracted_data)} records, {len(dialog_requests)} truncated fields found")
+    
+    # Phase 2: Batch fetch all "More..." content
+    if dialog_requests:
+        print("Phase 2: Batch fetching truncated content...")
+        batch_results = batch_fetch_full_content(session, dialog_requests, base_url, max_workers=3)
+        
+        # Phase 3: Update extracted data with full content
+        print("Phase 3: Integrating full content into extracted data...")
+        for row_index, field_contents in batch_results.items():
+            if row_index < len(extracted_data):
+                for field, full_content in field_contents.items():
+                    if full_content:
+                        extracted_data[row_index][field] = full_content
+                        print(f"  Updated {field} for record {row_index + 1}")
+    
+    # Close the session when done
+    session.close()
     
     print(f"\nExtracted {len(extracted_data)} records")
     
@@ -168,33 +348,91 @@ def display_sample_data(data, num_samples=5):
     if len(data) > num_samples:
         print(f"\n... and {len(data) - num_samples} more records")
 
+def run_enhanced_extraction():
+    """Run the enhanced extraction and show progress"""
+    
+    print("=" * 60)
+    print("ENHANCED MyGAP PF DATA EXTRACTION")
+    print("Now with full content extraction from 'More ...' dialogs")
+    print("=" * 60)
+    
+    # Run the enhanced extraction
+    data = extract_mygap_pf_data(save_to_file=True)
+    
+    if data:
+        print(f"\n=== EXTRACTION COMPLETE ===")
+        print(f"Total records extracted: {len(data)}")
+        
+        # Count how many records had truncated jenis_tanaman fields
+        more_count = 0
+        full_content_examples = []
+        
+        for record in data:
+            jenis_tanaman = record.get('jenis_tanaman', '')
+            # Look for records that likely had "More ..." originally (now should have full content)
+            if jenis_tanaman and (',' in jenis_tanaman and len(jenis_tanaman) > 100):
+                # These are likely records that were expanded from "More ..." dialogs
+                more_count += 1
+                if len(full_content_examples) < 3:
+                    full_content_examples.append({
+                        'no_pensijilan': record.get('no_pensijilan', ''),
+                        'nama': record.get('nama', ''),
+                        'jenis_tanaman': jenis_tanaman
+                    })
+        
+        print(f"\nRecords with extensive plant lists (likely expanded from 'More ...'): {more_count}")
+        
+        print("\nExamples of fully expanded plant lists:")
+        for i, example in enumerate(full_content_examples, 1):
+            print(f"\n{i}. {example['nama']} ({example['no_pensijilan']})")
+            print(f"   Plants: {example['jenis_tanaman'][:100]}...")
+        
+        # Field completion analysis
+        field_counts = {}
+        for field in ['no_pensijilan', 'nama', 'jenis_tanaman', 'negeri', 'daerah']:
+            field_counts[field] = sum(1 for record in data if record.get(field, '').strip())
+        
+        print(f"\n=== DATA QUALITY ===")
+        for field, count in field_counts.items():
+            percentage = (count / len(data)) * 100 if data else 0
+            print(f"{field}: {count}/{len(data)} ({percentage:.1f}%)")
+            
+    else:
+        print("❌ Extraction failed!")
+
 # Main execution
 if __name__ == "__main__":
-    # Extract the data
-    mygap_data = extract_mygap_pf_data()
+    import sys
     
-    if mygap_data:
-        # Display sample data
-        display_sample_data(mygap_data)
-        
-        # Save data to files
-        save_data(mygap_data)
-        
-        # Show summary statistics
-        print(f"\n=== SUMMARY ===")
-        print(f"Total records extracted: {len(mygap_data)}")
-        
-        # Count non-empty values for each field
-        field_counts = {}
-        for field in DATA_FIELDS:
-            field_counts[field] = sum(1 for record in mygap_data if record.get(field, '').strip())
-        
-        print("\nField completion rates:")
-        for field, count in field_counts.items():
-            percentage = (count / len(mygap_data)) * 100 if mygap_data else 0
-            print(f"  {field}: {count}/{len(mygap_data)} ({percentage:.1f}%)")
+    if len(sys.argv) > 1 and sys.argv[1] == "--enhanced":
+        # Run enhanced extraction with summary
+        run_enhanced_extraction()
     else:
-        print("Failed to extract data") 
+        # Run standard extraction
+        mygap_data = extract_mygap_pf_data()
+        
+        if mygap_data:
+            # Display sample data
+            display_sample_data(mygap_data)
+            
+            # Save data to files
+            save_data(mygap_data)
+            
+            # Show summary statistics
+            print(f"\n=== SUMMARY ===")
+            print(f"Total records extracted: {len(mygap_data)}")
+            
+            # Count non-empty values for each field
+            field_counts = {}
+            for field in DATA_FIELDS:
+                field_counts[field] = sum(1 for record in mygap_data if record.get(field, '').strip())
+            
+            print("\nField completion rates:")
+            for field, count in field_counts.items():
+                percentage = (count / len(mygap_data)) * 100 if mygap_data else 0
+                print(f"  {field}: {count}/{len(mygap_data)} ({percentage:.1f}%)")
+        else:
+            print("Failed to extract data") 
 
 # 13.8.2025
 # Task 1 - Remove last column due to empty data

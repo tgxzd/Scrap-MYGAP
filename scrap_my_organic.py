@@ -6,26 +6,25 @@ from datetime import datetime
 
 DATA_FIELDS = [
     'no_pensijilan',      # Certification Number
-    'kategori_pemohon',   # Applicant Category  
+    'kategori_pemohon',   # Applicant Category
     'nama',               # Name
     'negeri',             # State
     'daerah',             # District
-    'jenis_lebah',        # Bee Type
+    'jenis_tanaman',      # Plant Type
     'kategori_komoditi',  # Commodity Category
     'kategori_tanaman',   # Plant Category
-    'bil_haif',           # Number of Hives
     'luas_ladang',        # Farm Area (Ha)
     'tahun_pensijilan',   # Certification Year
     'tarikh_pensijilan',  # Certification Date
     'tempoh_sah_laku',    # Validity Period/Expiry Date
 ]
 
-def extract_mygap_am_data(save_to_file=True):
-    """Extract all available data from MyGAP AM (Apiary Management) certification table"""
-    print("Fetching data from MyGAP AM website...")
+def extract_mygap_organic_data(save_to_file=True):
+    """Extract all available data from MyGAP Organic certification table"""
+    print("Fetching data from MyGAP Organic website...")
     
     # 1. Get the page
-    response = requests.get('https://carianmygapmyorganic.doa.gov.my/mygap_am_list.php?pagesize=500')
+    response = requests.get('https://carianmygapmyorganic.doa.gov.my/myorganic_list.php?pagesize=-1')
     
     if response.status_code != 200:
         print(f"Error fetching page: {response.status_code}")
@@ -125,7 +124,7 @@ def save_data(data, format='both'):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
     if format in ['csv', 'both']:
-        csv_filename = f"mygap_data_am_{timestamp}.csv"
+        csv_filename = f"myorganic_data_{timestamp}.csv"
         with open(csv_filename, 'w', newline='', encoding='utf-8') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=DATA_FIELDS)
             writer.writeheader()
@@ -133,7 +132,7 @@ def save_data(data, format='both'):
         print(f"Data saved to {csv_filename}")
     
     if format in ['json', 'both']:
-        json_filename = f"mygap_data_am_{timestamp}.json"
+        json_filename = f"myorganic_data_{timestamp}.json"
         
         # Create structured JSON with metadata
         json_data = {
@@ -171,27 +170,28 @@ def display_sample_data(data, num_samples=5):
 # Main execution
 if __name__ == "__main__":
     # Extract the data
-    mygap_data = extract_mygap_am_data()
+    organic_data = extract_mygap_organic_data()
     
-    if mygap_data:
+    if organic_data:
         # Display sample data
-        display_sample_data(mygap_data)
+        display_sample_data(organic_data)
         
         # Save data to files
-        save_data(mygap_data)
+        save_data(organic_data)
         
         # Show summary statistics
         print(f"\n=== SUMMARY ===")
-        print(f"Total records extracted: {len(mygap_data)}")
+        print(f"Total records extracted: {len(organic_data)}")
         
         # Count non-empty values for each field
         field_counts = {}
         for field in DATA_FIELDS:
-            field_counts[field] = sum(1 for record in mygap_data if record.get(field, '').strip())
+            field_counts[field] = sum(1 for record in organic_data if record.get(field, '').strip())
         
         print("\nField completion rates:")
         for field, count in field_counts.items():
-            percentage = (count / len(mygap_data)) * 100 if mygap_data else 0
-            print(f"  {field}: {count}/{len(mygap_data)} ({percentage:.1f}%)")
+            percentage = (count / len(organic_data)) * 100 if organic_data else 0
+            print(f"  {field}: {count}/{len(organic_data)} ({percentage:.1f}%)")
     else:
         print("Failed to extract data")
+
