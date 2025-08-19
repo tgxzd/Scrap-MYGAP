@@ -9,7 +9,9 @@ import os
 import glob
 
 # Import our scraping functions
-from scrap_pf import extract_mygap_pf_data, DATA_FIELDS
+from scrap_pf import extract_mygap_pf_data, DATA_FIELDS as PF_DATA_FIELDS
+from scrap_am import extract_mygap_am_data, DATA_FIELDS as AM_DATA_FIELDS
+from scrap_my_organic import extract_mygap_organic_data, DATA_FIELDS as ORGANIC_DATA_FIELDS
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -25,17 +27,23 @@ app = FastAPI(
 # Pydantic models for API responses
 class MyGAPRecord(BaseModel):
     no_pensijilan: Optional[str] = None          # Certification Number
-    projek: Optional[str] = None                 # Applicant Category
+    # PF-specific fields
+    projek: Optional[str] = None                 # Project 
+    jenis_tanaman: Optional[str] = None          # Plant Type 
+    # AM-specific fields  
+    kategori_pemohon: Optional[str] = None       # Applicant Category 
+    jenis_lebah: Optional[str] = None            # Bee Type 
+    bil_haif: Optional[str] = None               # Number of Hives
+    # Common fields
     nama: Optional[str] = None                   # Name
     negeri: Optional[str] = None                 # State
     daerah: Optional[str] = None                 # District
-    jenis_tanaman: Optional[str] = None          # Plant Type
     kategori_komoditi: Optional[str] = None      # Commodity Category
     kategori_tanaman: Optional[str] = None       # Plant Category
-    luas_ladang: Optional[str] = None            # Farm Area (Ha)
+    luas_ladang: Optional[str] = None            # Farm Area 
     tahun_pensijilan: Optional[str] = None       # Certification Year
     tarikh_pensijilan: Optional[str] = None      # Certification Date
-    tempoh_sah_laku: Optional[str] = None        # Expiry Date
+    tempoh_sah_laku: Optional[str] = None        # Validity Period/Expiry Date
 
 class MyGAPResponse(BaseModel):
     success: bool
@@ -64,7 +72,9 @@ async def root():
         "message": "MyGAP Data Scraper API",
         "version": "1.0.0",
         "endpoints": {
-            "/mygap/data": "Fetch all MyGAP certification data",
+            "/mygap/data/pf": "Fetch MyGAP Plant & Fresh certification data",
+            "/mygap/data/am": "Fetch MyGAP Apiary Management certification data",
+            "/mygap/data/organic": "Fetch MyGAP Organic certification data",
             "/mygap/stats": "Get statistics about the data",
             "/docs": "API documentation (Swagger UI)",
             "/redoc": "API documentation (ReDoc)"
@@ -85,8 +95,8 @@ async def get_mygap_data():
         raw_data = None
         data_source = "cache"
         
-        # Find the most recent JSON file
-        json_files = glob.glob("mygap_data_*.json")
+        # Find the most recent PF JSON file
+        json_files = glob.glob("mygap_data_pf_*.json")
         if json_files:
             # Sort by modification time, get the newest
             latest_file = max(json_files, key=os.path.getmtime)
@@ -151,6 +161,166 @@ async def get_mygap_data():
             detail=f"Internal server error: {str(e)}"
         )
 
+@app.get("/mygap/data/am", response_model=MyGAPResponse)
+async def get_mygap_am_data():
+    """
+    Fetch MyGAP AM (Apiary Management) certification data - reads from JSON file first, 
+    only fetches new data if file is older than 1 day
+    
+    Returns:
+        MyGAPResponse: Complete dataset with all AM certification records
+    """
+    try:
+        # First try to read from existing JSON file
+        raw_data = None
+        data_source = "cache"
+        
+        # Find the most recent AM JSON file
+        json_files = glob.glob("mygap_data_am_*.json")
+        if json_files:
+            # Sort by modification time, get the newest
+            latest_file = max(json_files, key=os.path.getmtime)
+            file_mtime = datetime.fromtimestamp(os.path.getmtime(latest_file))
+            file_age = datetime.now() - file_mtime
+            
+            logger.info(f"Found existing AM file: {latest_file}, age: {file_age}")
+            
+            # If file is less than 1 day old, read from it
+            if file_age < timedelta(days=1):
+                try:
+                    with open(latest_file, 'r', encoding='utf-8') as f:
+                        file_data = json.load(f)
+                        if isinstance(file_data, list):
+                            raw_data = file_data
+                        elif isinstance(file_data, dict) and 'data' in file_data:
+                            raw_data = file_data['data']
+                        else:
+                            raw_data = file_data
+                    logger.info(f"Successfully loaded {len(raw_data) if raw_data else 0} AM records from cache")
+                except Exception as e:
+                    logger.warning(f"Failed to read from AM cache file: {str(e)}")
+                    raw_data = None
+            else:
+                logger.info(f"AM file is older than 1 day ({file_age}), fetching fresh data")
+        
+        # If no valid cached data, extract from website
+        if raw_data is None:
+            logger.info("Fetching fresh AM data from MyGAP website...")
+            raw_data = extract_mygap_am_data(save_to_file=True)  # Save fresh data to file
+            data_source = "fresh"
+            
+            if raw_data is None:
+                logger.error("Failed to extract AM data from MyGAP website")
+                raise HTTPException(
+                    status_code=500, 
+                    detail="Failed to extract AM data from MyGAP website. The website might be unavailable."
+                )
+        
+        # Convert raw data to Pydantic models
+        records = []
+        for item in raw_data:
+            record = MyGAPRecord(**item)
+            records.append(record)
+        
+        message = f"Successfully loaded {len(records)} MyGAP AM certification records from {data_source}"
+        response = MyGAPResponse(
+            success=True,
+            message=message,
+            total_records=len(records),
+            timestamp=datetime.now().isoformat(),
+            data=records
+        )
+        
+        logger.info(message)
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error loading MyGAP AM data: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Internal server error: {str(e)}"
+        )
+
+@app.get("/mygap/data/organic", response_model=MyGAPResponse)
+async def get_mygap_organic_data():
+    """
+    Fetch MyGAP Organic certification data - reads from JSON file first, 
+    only fetches new data if file is older than 1 day
+    
+    Returns:
+        MyGAPResponse: Complete dataset with all Organic certification records
+    """
+    try:
+        # First try to read from existing JSON file
+        raw_data = None
+        data_source = "cache"
+        
+        # Find the most recent Organic JSON file
+        json_files = glob.glob("myorganic_data_*.json")
+        if json_files:
+            # Sort by modification time, get the newest
+            latest_file = max(json_files, key=os.path.getmtime)
+            file_mtime = datetime.fromtimestamp(os.path.getmtime(latest_file))
+            file_age = datetime.now() - file_mtime
+            
+            logger.info(f"Found existing Organic file: {latest_file}, age: {file_age}")
+            
+            # If file is less than 1 day old, read from it
+            if file_age < timedelta(days=1):
+                try:
+                    with open(latest_file, 'r', encoding='utf-8') as f:
+                        file_data = json.load(f)
+                        if isinstance(file_data, list):
+                            raw_data = file_data
+                        elif isinstance(file_data, dict) and 'data' in file_data:
+                            raw_data = file_data['data']
+                        else:
+                            raw_data = file_data
+                    logger.info(f"Successfully loaded {len(raw_data) if raw_data else 0} Organic records from cache")
+                except Exception as e:
+                    logger.warning(f"Failed to read from Organic cache file: {str(e)}")
+                    raw_data = None
+            else:
+                logger.info(f"Organic file is older than 1 day ({file_age}), fetching fresh data")
+        
+        # If no valid cached data, extract from website
+        if raw_data is None:
+            logger.info("Fetching fresh Organic data from MyGAP website...")
+            raw_data = extract_mygap_organic_data(save_to_file=True)  # Save fresh data to file
+            data_source = "fresh"
+            
+            if raw_data is None:
+                logger.error("Failed to extract Organic data from MyGAP website")
+                raise HTTPException(
+                    status_code=500, 
+                    detail="Failed to extract Organic data from MyGAP website. The website might be unavailable."
+                )
+        
+        # Convert raw data to Pydantic models
+        records = []
+        for item in raw_data:
+            record = MyGAPRecord(**item)
+            records.append(record)
+        
+        message = f"Successfully loaded {len(records)} MyGAP Organic certification records from {data_source}"
+        response = MyGAPResponse(
+            success=True,
+            message=message,
+            total_records=len(records),
+            timestamp=datetime.now().isoformat(),
+            data=records
+        )
+        
+        logger.info(message)
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error loading MyGAP Organic data: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Internal server error: {str(e)}"
+        )
+
 @app.get("/mygap/stats", response_model=StatsResponse)
 async def get_mygap_stats():
     """
@@ -176,7 +346,7 @@ async def get_mygap_stats():
         field_stats = []
         total_records = len(raw_data)
         
-        for field in DATA_FIELDS:
+        for field in PF_DATA_FIELDS:
             completed_count = sum(1 for record in raw_data if record.get(field, '').strip())
             completion_percentage = (completed_count / total_records * 100) if total_records > 0 else 0
             
@@ -235,7 +405,7 @@ async def download_json():
                 "metadata": {
                     "extracted_at": datetime.now().isoformat(),
                     "total_records": len(raw_data),
-                    "fields": DATA_FIELDS
+                    "fields": PF_DATA_FIELDS
                 },
                 "data": raw_data
             },
