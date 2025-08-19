@@ -48,7 +48,7 @@ class MyGAPRecord_AM(BaseModel):
     nama: Optional[str] = None                   # Name
     negeri: Optional[str] = None                 # State
     daerah: Optional[str] = None                 # District
-    jenis_lebah: Optional[str] = None            # Bee Type
+    jenis_tanaman: Optional[str] = None            # Bee Type
     kategori_komoditi: Optional[str] = None      # Commodity Category
     kategori_tanaman: Optional[str] = None       # Plant Category
     bil_haif: Optional[str] = None               # Number of Hives
