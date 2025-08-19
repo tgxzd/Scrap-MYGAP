@@ -20,7 +20,7 @@ DATA_FIELDS = [
     'tempoh_sah_laku'     # Expiry Date
 ]
 
-def extract_full_plant_info(cell):
+def get_full_text_from_dialog(cell):
     """Extract complete plant information from a table cell"""
     # First get the visible text
     visible_text = cell.get_text(strip=True)
@@ -138,7 +138,7 @@ def extract_mygap_tbm_data(save_to_file=True):
                     cell = cells[col_index]
                     # Special handling for jenis_tanaman field
                     if field == 'jenis_tanaman':
-                        cell_data = extract_full_plant_info(cell)
+                        cell_data = get_full_text_from_dialog(cell)
                     else:
                         cell_data = cell.get_text(strip=True)
                     row_data[field] = cell_data

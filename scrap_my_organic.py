@@ -6,7 +6,7 @@ from datetime import datetime
 
 DATA_FIELDS = [
     'no_pensijilan',      # Certification Number
-    'kategori_pemohon',   # Applicant Category
+    'projek',   # Applicant Category
     'nama',               # Name
     'negeri',             # State
     'daerah',             # District
@@ -18,6 +18,46 @@ DATA_FIELDS = [
     'tarikh_pensijilan',  # Certification Date
     'tempoh_sah_laku',    # Validity Period/Expiry Date
 ]
+
+def get_full_text_from_dialog(cell):
+    """Extract complete information from a table cell with 'More' link"""
+    # First get the visible text
+    visible_text = cell.get_text(strip=True)
+    
+    # Check if there's a "More..." link
+    more_link = cell.find('a', {'data-gridlink': True})
+    if more_link and 'More' in visible_text:
+        # Get the text before "More..."
+        main_text = visible_text.split('More')[0].strip()
+        
+        # Get the data from the data-query attribute
+        query_data = more_link.get('data-query', '')
+        if query_data and 'key1=' in query_data:
+            try:
+                # Make a request to get the full information
+                key_id = query_data.split('key1=')[1].split('&')[0]
+                full_info_url = f'https://carianmygapmyorganic.doa.gov.my/fulltext.php?pagetype=list&table=myorganic&field=nama&key1={key_id}&page=list2'
+                
+                response = requests.get(full_info_url)
+                if response.status_code == 200:
+                    soup = BeautifulSoup(response.content, 'html.parser')
+                    # The full text is typically in a div or span
+                    full_text = soup.get_text(strip=True)
+                    
+                    # Try to parse as JSON and extract just the content
+                    try:
+                        json_data = json.loads(full_text)
+                        if isinstance(json_data, dict) and 'textCont' in json_data:
+                            return json_data['textCont']
+                    except json.JSONDecodeError:
+                        pass
+                    
+                    return full_text if full_text else main_text
+            except Exception as e:
+                print(f"Error fetching full info: {e}")
+                return main_text
+        return main_text
+    return visible_text
 
 def extract_mygap_organic_data(save_to_file=True):
     """Extract all available data from MyGAP Organic certification table"""
@@ -94,7 +134,11 @@ def extract_mygap_organic_data(save_to_file=True):
             if field in field_to_col_map:
                 col_index = field_to_col_map[field]
                 if len(cells) > col_index:
-                    cell_data = cells[col_index].get_text(strip=True)
+                    # Special handling for fields that might have "More" links
+                    if field in ['nama', 'jenis_tanaman']:  # Add any other fields that might have "More" links
+                        cell_data = get_full_text_from_dialog(cells[col_index])
+                    else:
+                        cell_data = cells[col_index].get_text(strip=True)
                     row_data[field] = cell_data
                     if cell_data:  # Check if there's actual data
                         has_data = True
@@ -103,8 +147,8 @@ def extract_mygap_organic_data(save_to_file=True):
             else:
                 row_data[field] = ""
         
-        # Only add rows that have at least some data
-        if has_data:
+        # Only add rows that have a certification number
+        if has_data and row_data['no_pensijilan'].strip():
             extracted_data.append(row_data)
     
     print(f"\nExtracted {len(extracted_data)} records")
@@ -124,7 +168,7 @@ def save_data(data, format='both'):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
     if format in ['csv', 'both']:
-        csv_filename = f"myorganic_data_{timestamp}.csv"
+        csv_filename = f"mygap_data_organic_{timestamp}.csv"
         with open(csv_filename, 'w', newline='', encoding='utf-8') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=DATA_FIELDS)
             writer.writeheader()
@@ -132,7 +176,7 @@ def save_data(data, format='both'):
         print(f"Data saved to {csv_filename}")
     
     if format in ['json', 'both']:
-        json_filename = f"myorganic_data_{timestamp}.json"
+        json_filename = f"mygap_data_organic_{timestamp}.json"
         
         # Create structured JSON with metadata
         json_data = {
@@ -194,4 +238,3 @@ if __name__ == "__main__":
             print(f"  {field}: {count}/{len(organic_data)} ({percentage:.1f}%)")
     else:
         print("Failed to extract data")
-
