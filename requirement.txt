@@ -6,3 +6,4 @@ schedule
 pyautogui
 fastapi
 uvicorn
+pydantic
