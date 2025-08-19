@@ -245,25 +245,83 @@ def display_sample_data(data, num_samples=5):
                 if value:
                     print(f"  {field}: {value}")
 
-if __name__ == "__main__":
-
-    mygap_data = extract_mygap_tanaman_data()
-
-    if mygap_data:
-        display_sample_data(mygap_data)
-        save_data(mygap_data)
-
-        print(f"\n=== SUMMARY ===")
-        print(f"Total records extracted: {len(mygap_data)}")
+def run_enhanced_extraction():
+    """Run the enhanced extraction and show progress"""
+    
+    print("=" * 60)
+    print("ENHANCED MyGAP DATA EXTRACTION")
+    print("Now with full content extraction from 'More ...' dialogs")
+    print("=" * 60)
+    
+    # Run the enhanced extraction
+    data = extract_mygap_tanaman_data(save_to_file=True)
+    
+    if data:
+        print(f"\n=== EXTRACTION COMPLETE ===")
+        print(f"Total records extracted: {len(data)}")
         
-        # Count non-empty values for each field
+        # Count how many records had truncated jenis_tanaman fields
+        more_count = 0
+        full_content_examples = []
+        
+        for record in data:
+            jenis_tanaman = record.get('jenis_tanaman', '')
+            # Look for records that likely had "More ..." originally (now should have full content)
+            if jenis_tanaman and (',' in jenis_tanaman and len(jenis_tanaman) > 100):
+                # These are likely records that were expanded from "More ..." dialogs
+                more_count += 1
+                if len(full_content_examples) < 3:
+                    full_content_examples.append({
+                        'no_pensijilan': record.get('no_pensijilan', ''),
+                        'nama': record.get('nama', ''),
+                        'jenis_tanaman': jenis_tanaman
+                    })
+        
+        print(f"\nRecords with extensive plant lists (likely expanded from 'More ...'): {more_count}")
+        
+        print("\nExamples of fully expanded plant lists:")
+        for i, example in enumerate(full_content_examples, 1):
+            print(f"\n{i}. {example['nama']} ({example['no_pensijilan']})")
+            print(f"   Plants: {example['jenis_tanaman'][:100]}...")
+        
+        # Field completion analysis
         field_counts = {}
-        for field in DATA_FIELDS:
-            field_counts[field] = sum(1 for record in mygap_data if record.get(field, '').strip())
+        for field in ['no_pensijilan', 'nama', 'jenis_tanaman', 'negeri', 'daerah']:
+            field_counts[field] = sum(1 for record in data if record.get(field, '').strip())
         
-        print("\nField completion rates:")
+        print(f"\n=== DATA QUALITY ===")
         for field, count in field_counts.items():
-            percentage = (count / len(mygap_data)) * 100 if mygap_data else 0
-            print(f"  {field}: {count}/{len(mygap_data)} ({percentage:.1f}%)")
+            percentage = (count / len(data)) * 100 if data else 0
+            print(f"{field}: {count}/{len(data)} ({percentage:.1f}%)")
+            
     else:
-        print("Failed to extract data")
+        print("❌ Extraction failed!")
+
+if __name__ == "__main__":
+    import sys
+    
+    if len(sys.argv) > 1 and sys.argv[1] == "--enhanced":
+        # Run enhanced extraction with summary
+        run_enhanced_extraction()
+    else:
+        # Run standard extraction
+        mygap_data = extract_mygap_tanaman_data()
+
+        if mygap_data:
+            display_sample_data(mygap_data)
+            save_data(mygap_data)
+
+            print(f"\n=== SUMMARY ===")
+            print(f"Total records extracted: {len(mygap_data)}")
+            
+            # Count non-empty values for each field
+            field_counts = {}
+            for field in DATA_FIELDS:
+                field_counts[field] = sum(1 for record in mygap_data if record.get(field, '').strip())
+            
+            print("\nField completion rates:")
+            for field, count in field_counts.items():
+                percentage = (count / len(mygap_data)) * 100 if mygap_data else 0
+                print(f"  {field}: {count}/{len(mygap_data)} ({percentage:.1f}%)")
+        else:
+            print("Failed to extract data")

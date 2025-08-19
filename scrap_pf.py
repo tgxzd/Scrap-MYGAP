@@ -3,6 +3,10 @@ from bs4 import BeautifulSoup
 import csv
 import json
 from datetime import datetime
+import time
+import re
+from urllib.parse import urljoin, parse_qs, urlparse
+import html
 
 # Define the data fields we want to extract
 DATA_FIELDS = [
@@ -20,12 +24,67 @@ DATA_FIELDS = [
     'tempoh_sah_laku'     # Expiry Date
 ]
 
+def get_full_text_from_dialog(session, more_link_url, base_url):
+    """Extract full text from the dialog modal when 'More ...' is clicked"""
+    try:
+        # Construct the full URL for the dialog content
+        if more_link_url.startswith('fulltext.php'):
+            full_url = urljoin(base_url, more_link_url)
+        else:
+            full_url = more_link_url
+            
+        print(f"  Fetching full content from: {full_url}")
+        
+        # Add a small delay to be respectful
+        time.sleep(0.5)
+        
+        response = session.get(full_url)
+        if response.status_code == 200:
+            try:
+                # The response is HTML-encoded JSON format: {"success":true,"textCont":"FULL_CONTENT"}
+                # First decode HTML entities
+                decoded_content = html.unescape(response.text)
+                json_response = json.loads(decoded_content)
+                if json_response.get('success') and 'textCont' in json_response:
+                    content = json_response['textCont']
+                    # Clean up HTML tags and entities
+                    content = re.sub(r'<br\s*/?>', ', ', content)  # Replace <br> with commas
+                    content = re.sub(r'<[^>]+>', '', content)      # Remove any other HTML tags
+                    content = content.replace('\\n', ', ').replace('\n', ', ')  # Replace newlines
+                    content = re.sub(r',\s*,', ',', content)       # Remove duplicate commas
+                    content = re.sub(r',\s*$', '', content)        # Remove trailing comma
+                    content = content.strip()
+                    return content
+                else:
+                    print(f"  Unexpected JSON structure: {json_response}")
+                    return None
+            except json.JSONDecodeError:
+                # Fallback to HTML parsing if not JSON
+                dialog_soup = BeautifulSoup(response.content, 'html.parser')
+                modal_body = dialog_soup.find('div', class_='modal-body')
+                if modal_body:
+                    return modal_body.get_text(strip=True)
+                else:
+                    body_text = dialog_soup.get_text(strip=True)
+                    return body_text
+        else:
+            print(f"  Failed to fetch dialog content: {response.status_code}")
+            return None
+            
+    except Exception as e:
+        print(f"  Error fetching dialog content: {str(e)}")
+        return None
+
 def extract_mygap_pf_data(save_to_file=True):
     """Extract all available data from MyGAP certification table"""
     print("Fetching data from MyGAP website...")
     
-    # 1. Get the page
-    response = requests.get('https://carianmygapmyorganic.doa.gov.my/mygap_pf_list.php?pagesize=500')
+    # Create a session to maintain cookies and handle multiple requests
+    session = requests.Session()
+    base_url = 'https://carianmygapmyorganic.doa.gov.my/'
+    
+    # 1. Get the page with pagesize=-1 to get all records
+    response = session.get('https://carianmygapmyorganic.doa.gov.my/mygap_pf_list.php?pagesize=-1')
     
     if response.status_code != 200:
         print(f"Error fetching page: {response.status_code}")
@@ -95,7 +154,31 @@ def extract_mygap_pf_data(save_to_file=True):
             if field in field_to_col_map:
                 col_index = field_to_col_map[field]
                 if len(cells) > col_index:
-                    cell_data = cells[col_index].get_text(strip=True)
+                    cell = cells[col_index]
+                    cell_data = cell.get_text(strip=True)
+                    
+                    # Check if this cell contains a "More ..." link for truncated content
+                    if 'More' in cell_data and '...' in cell_data:
+                        print(f"Found truncated {field} field, fetching full content...")
+                        
+                        # Look for the "More ..." link in the cell with data-query attribute
+                        more_link = cell.find('a', attrs={'data-query': re.compile(r'fulltext\.php')})
+                        if more_link:
+                            # Extract the URL from data-query attribute or href
+                            query_url = more_link.get('data-query') or more_link.get('href')
+                            if query_url and query_url != 'javascript:void(0);':
+                                full_content = get_full_text_from_dialog(session, query_url, base_url)
+                                if full_content:
+                                    cell_data = full_content
+                                    print(f"  Successfully fetched full content: {cell_data[:100]}...")
+                                else:
+                                    print(f"  Failed to fetch full content, keeping truncated version")
+                        else:
+                            # Try to clean up the "More ..." suffix for better data quality
+                            cell_data = re.sub(r'More\s*\.+$', '', cell_data).strip()
+                            if cell_data.endswith(','):
+                                cell_data = cell_data[:-1].strip()
+                    
                     row_data[field] = cell_data
                     if cell_data:  # Check if there's actual data
                         has_data = True
@@ -168,33 +251,91 @@ def display_sample_data(data, num_samples=5):
     if len(data) > num_samples:
         print(f"\n... and {len(data) - num_samples} more records")
 
+def run_enhanced_extraction():
+    """Run the enhanced extraction and show progress"""
+    
+    print("=" * 60)
+    print("ENHANCED MyGAP PF DATA EXTRACTION")
+    print("Now with full content extraction from 'More ...' dialogs")
+    print("=" * 60)
+    
+    # Run the enhanced extraction
+    data = extract_mygap_pf_data(save_to_file=True)
+    
+    if data:
+        print(f"\n=== EXTRACTION COMPLETE ===")
+        print(f"Total records extracted: {len(data)}")
+        
+        # Count how many records had truncated jenis_tanaman fields
+        more_count = 0
+        full_content_examples = []
+        
+        for record in data:
+            jenis_tanaman = record.get('jenis_tanaman', '')
+            # Look for records that likely had "More ..." originally (now should have full content)
+            if jenis_tanaman and (',' in jenis_tanaman and len(jenis_tanaman) > 100):
+                # These are likely records that were expanded from "More ..." dialogs
+                more_count += 1
+                if len(full_content_examples) < 3:
+                    full_content_examples.append({
+                        'no_pensijilan': record.get('no_pensijilan', ''),
+                        'nama': record.get('nama', ''),
+                        'jenis_tanaman': jenis_tanaman
+                    })
+        
+        print(f"\nRecords with extensive plant lists (likely expanded from 'More ...'): {more_count}")
+        
+        print("\nExamples of fully expanded plant lists:")
+        for i, example in enumerate(full_content_examples, 1):
+            print(f"\n{i}. {example['nama']} ({example['no_pensijilan']})")
+            print(f"   Plants: {example['jenis_tanaman'][:100]}...")
+        
+        # Field completion analysis
+        field_counts = {}
+        for field in ['no_pensijilan', 'nama', 'jenis_tanaman', 'negeri', 'daerah']:
+            field_counts[field] = sum(1 for record in data if record.get(field, '').strip())
+        
+        print(f"\n=== DATA QUALITY ===")
+        for field, count in field_counts.items():
+            percentage = (count / len(data)) * 100 if data else 0
+            print(f"{field}: {count}/{len(data)} ({percentage:.1f}%)")
+            
+    else:
+        print("❌ Extraction failed!")
+
 # Main execution
 if __name__ == "__main__":
-    # Extract the data
-    mygap_data = extract_mygap_pf_data()
+    import sys
     
-    if mygap_data:
-        # Display sample data
-        display_sample_data(mygap_data)
-        
-        # Save data to files
-        save_data(mygap_data)
-        
-        # Show summary statistics
-        print(f"\n=== SUMMARY ===")
-        print(f"Total records extracted: {len(mygap_data)}")
-        
-        # Count non-empty values for each field
-        field_counts = {}
-        for field in DATA_FIELDS:
-            field_counts[field] = sum(1 for record in mygap_data if record.get(field, '').strip())
-        
-        print("\nField completion rates:")
-        for field, count in field_counts.items():
-            percentage = (count / len(mygap_data)) * 100 if mygap_data else 0
-            print(f"  {field}: {count}/{len(mygap_data)} ({percentage:.1f}%)")
+    if len(sys.argv) > 1 and sys.argv[1] == "--enhanced":
+        # Run enhanced extraction with summary
+        run_enhanced_extraction()
     else:
-        print("Failed to extract data") 
+        # Run standard extraction
+        mygap_data = extract_mygap_pf_data()
+        
+        if mygap_data:
+            # Display sample data
+            display_sample_data(mygap_data)
+            
+            # Save data to files
+            save_data(mygap_data)
+            
+            # Show summary statistics
+            print(f"\n=== SUMMARY ===")
+            print(f"Total records extracted: {len(mygap_data)}")
+            
+            # Count non-empty values for each field
+            field_counts = {}
+            for field in DATA_FIELDS:
+                field_counts[field] = sum(1 for record in mygap_data if record.get(field, '').strip())
+            
+            print("\nField completion rates:")
+            for field, count in field_counts.items():
+                percentage = (count / len(mygap_data)) * 100 if mygap_data else 0
+                print(f"  {field}: {count}/{len(mygap_data)} ({percentage:.1f}%)")
+        else:
+            print("Failed to extract data") 
 
 # 13.8.2025
 # Task 1 - Remove last column due to empty data
