@@ -3,6 +3,10 @@ from bs4 import BeautifulSoup
 import csv
 import json
 from datetime import datetime
+import time
+import re
+from urllib.parse import urljoin, parse_qs, urlparse
+import html
 
 DATA_FIELDS = [
     'no_pensijilan',      # Certification Number
@@ -19,12 +23,67 @@ DATA_FIELDS = [
     'tempoh_sah_laku'     # Expiry Date
 ]
 
+def get_full_text_from_dialog(session, more_link_url, base_url):
+    """Extract full text from the dialog modal when 'More ...' is clicked"""
+    try:
+        # Construct the full URL for the dialog content
+        if more_link_url.startswith('fulltext.php'):
+            full_url = urljoin(base_url, more_link_url)
+        else:
+            full_url = more_link_url
+            
+        print(f"  Fetching full content from: {full_url}")
+        
+        # Add a small delay to be respectful
+        time.sleep(0.5)
+        
+        response = session.get(full_url)
+        if response.status_code == 200:
+            try:
+                # The response is HTML-encoded JSON format: {"success":true,"textCont":"FULL_CONTENT"}
+                # First decode HTML entities
+                decoded_content = html.unescape(response.text)
+                json_response = json.loads(decoded_content)
+                if json_response.get('success') and 'textCont' in json_response:
+                    content = json_response['textCont']
+                    # Clean up HTML tags and entities
+                    content = re.sub(r'<br\s*/?>', ', ', content)  # Replace <br> with commas
+                    content = re.sub(r'<[^>]+>', '', content)      # Remove any other HTML tags
+                    content = content.replace('\\n', ', ').replace('\n', ', ')  # Replace newlines
+                    content = re.sub(r',\s*,', ',', content)       # Remove duplicate commas
+                    content = re.sub(r',\s*$', '', content)        # Remove trailing comma
+                    content = content.strip()
+                    return content
+                else:
+                    print(f"  Unexpected JSON structure: {json_response}")
+                    return None
+            except json.JSONDecodeError:
+                # Fallback to HTML parsing if not JSON
+                dialog_soup = BeautifulSoup(response.content, 'html.parser')
+                modal_body = dialog_soup.find('div', class_='modal-body')
+                if modal_body:
+                    return modal_body.get_text(strip=True)
+                else:
+                    body_text = dialog_soup.get_text(strip=True)
+                    return body_text
+        else:
+            print(f"  Failed to fetch dialog content: {response.status_code}")
+            return None
+            
+    except Exception as e:
+        print(f"  Error fetching dialog content: {str(e)}")
+        return None
+
 def extract_mygap_tanaman_data(save_to_file=True):
     """Extract all available data from MyGAP certification table"""
     print("Fetching data from MyGAP website...")
     
+    # Create a session to maintain cookies and handle multiple requests
+    session = requests.Session()
+    base_url = 'https://carianmygapmyorganic.doa.gov.my/'
+    
     # 1. Get the page
-    response = requests.get('https://carianmygapmyorganic.doa.gov.my/mygap_tanaman_list.php?pagesize=-1')
+    response = session.get('https://carianmygapmyorganic.doa.gov.my/mygap_tanaman_list.php?pagesize=-1')
     
     if response.status_code != 200:
         print(f"Error fetching page: {response.status_code}")
@@ -93,7 +152,31 @@ def extract_mygap_tanaman_data(save_to_file=True):
             if field in field_to_col_map:
                 col_index = field_to_col_map[field]
                 if len(cells) > col_index:
-                    cell_data = cells[col_index].get_text(strip=True)
+                    cell = cells[col_index]
+                    cell_data = cell.get_text(strip=True)
+                    
+                    # Check if this cell contains a "More ..." link for truncated content
+                    if 'More' in cell_data and '...' in cell_data:
+                        print(f"Found truncated {field} field, fetching full content...")
+                        
+                        # Look for the "More ..." link in the cell with data-query attribute
+                        more_link = cell.find('a', attrs={'data-query': re.compile(r'fulltext\.php')})
+                        if more_link:
+                            # Extract the URL from data-query attribute or href
+                            query_url = more_link.get('data-query') or more_link.get('href')
+                            if query_url and query_url != 'javascript:void(0);':
+                                full_content = get_full_text_from_dialog(session, query_url, base_url)
+                                if full_content:
+                                    cell_data = full_content
+                                    print(f"  Successfully fetched full content: {cell_data[:100]}...")
+                                else:
+                                    print(f"  Failed to fetch full content, keeping truncated version")
+                        else:
+                            # Try to clean up the "More ..." suffix for better data quality
+                            cell_data = re.sub(r'More\s*\.+$', '', cell_data).strip()
+                            if cell_data.endswith(','):
+                                cell_data = cell_data[:-1].strip()
+                    
                     row_data[field] = cell_data
                     if cell_data:
                         has_data = True
