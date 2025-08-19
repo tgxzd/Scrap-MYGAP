@@ -20,6 +20,46 @@ DATA_FIELDS = [
     'tempoh_sah_laku'     # Expiry Date
 ]
 
+def extract_full_plant_info(cell):
+    """Extract complete plant information from a table cell"""
+    # First get the visible text
+    visible_text = cell.get_text(strip=True)
+    
+    # Check if there's a "More..." link
+    more_link = cell.find('a', {'data-gridlink': True})
+    if more_link and 'More' in visible_text:
+        # Get the text before "More..."
+        main_text = visible_text.split('More')[0].strip()
+        
+        # Get the plants from the data-query attribute
+        query_data = more_link.get('data-query', '')
+        if query_data and 'key1=' in query_data:
+            try:
+                # Make a request to get the full plant list
+                key_id = query_data.split('key1=')[1].split('&')[0]
+                full_info_url = f'https://carianmygapmyorganic.doa.gov.my/fulltext.php?pagetype=list&table=mygap_tbm&field=jenis_tanaman&key1={key_id}&page=list1'
+                
+                response = requests.get(full_info_url)
+                if response.status_code == 200:
+                    soup = BeautifulSoup(response.content, 'html.parser')
+                    # The full text is typically in a div or span
+                    full_text = soup.get_text(strip=True)
+                    
+                    # Try to parse as JSON and extract just the plant list
+                    try:
+                        json_data = json.loads(full_text)
+                        if isinstance(json_data, dict) and 'textCont' in json_data:
+                            return json_data['textCont']
+                    except json.JSONDecodeError:
+                        pass
+                    
+                    return full_text if full_text else main_text
+            except Exception as e:
+                print(f"Error fetching full plant info: {e}")
+                return main_text
+        return main_text
+    return visible_text
+
 def extract_mygap_tbm_data(save_to_file=True):
     """Extract all available data from MyGAP certification table"""
     print("Fetching data from MyGAP website...")
@@ -95,7 +135,12 @@ def extract_mygap_tbm_data(save_to_file=True):
             if field in field_to_col_map:
                 col_index = field_to_col_map[field]
                 if len(cells) > col_index:
-                    cell_data = cells[col_index].get_text(strip=True)
+                    cell = cells[col_index]
+                    # Special handling for jenis_tanaman field
+                    if field == 'jenis_tanaman':
+                        cell_data = extract_full_plant_info(cell)
+                    else:
+                        cell_data = cell.get_text(strip=True)
                     row_data[field] = cell_data
                     if cell_data:  # Check if there's actual data
                         has_data = True
@@ -199,4 +244,4 @@ if __name__ == "__main__":
             percentage = (count / len(mygap_data)) * 100 if mygap_data else 0
             print(f"  {field}: {count}/{len(mygap_data)} ({percentage:.1f}%)")
     else:
-        print("Failed to extract data") 
+        print("Failed to extract data")
