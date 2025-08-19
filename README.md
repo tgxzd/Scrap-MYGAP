@@ -12,3 +12,5 @@ python main.py
 This will run the API and return scrapped data in json format
 
 ## Prerequisite
+
+aiizad
