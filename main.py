@@ -26,29 +26,113 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Pydantic models for API responses - Universal model with kategori_pemohon (no projek)
-class MyGAPRecord(BaseModel):
+# Specific Pydantic models for each scraper type
+class TBMRecord(BaseModel):
     no_pensijilan: Optional[str] = None          # Certification Number
-    kategori_pemohon: Optional[str] = None       # Applicant Category (renamed from projek for all data)
-    jenis_tanaman: Optional[str] = None          # Plant Type 
-    bil_haif: Optional[str] = None               # Number of Hives (AM-specific)
-    # Common fields
+    kategori_pemohon: Optional[str] = None       # Applicant Category
     nama: Optional[str] = None                   # Name
     negeri: Optional[str] = None                 # State
     daerah: Optional[str] = None                 # District
+    jenis_tanaman: Optional[str] = None          # Plant Type
     kategori_komoditi: Optional[str] = None      # Commodity Category
     kategori_tanaman: Optional[str] = None       # Plant Category
-    luas_ladang: Optional[str] = None            # Farm Area 
+    luas_ladang: Optional[str] = None            # Farm Area
     tahun_pensijilan: Optional[str] = None       # Certification Year
     tarikh_pensijilan: Optional[str] = None      # Certification Date
     tempoh_sah_laku: Optional[str] = None        # Validity Period/Expiry Date
 
-class MyGAPResponse(BaseModel):
+class PFRecord(BaseModel):
+    no_pensijilan: Optional[str] = None          # Certification Number
+    kategori_pemohon: Optional[str] = None       # Applicant Category
+    nama: Optional[str] = None                   # Name
+    negeri: Optional[str] = None                 # State
+    daerah: Optional[str] = None                 # District
+    jenis_tanaman: Optional[str] = None          # Plant Type
+    kategori_komoditi: Optional[str] = None      # Commodity Category
+    kategori_tanaman: Optional[str] = None       # Plant Category
+    luas_ladang: Optional[str] = None            # Farm Area
+    tahun_pensijilan: Optional[str] = None       # Certification Year
+    tarikh_pensijilan: Optional[str] = None      # Certification Date
+    tempoh_sah_laku: Optional[str] = None        # Validity Period/Expiry Date
+
+class AMRecord(BaseModel):
+    no_pensijilan: Optional[str] = None          # Certification Number
+    kategori_pemohon: Optional[str] = None       # Applicant Category
+    nama: Optional[str] = None                   # Name
+    negeri: Optional[str] = None                 # State
+    daerah: Optional[str] = None                 # District
+    jenis_tanaman: Optional[str] = None          # Plant Type
+    kategori_komoditi: Optional[str] = None      # Commodity Category
+    kategori_tanaman: Optional[str] = None       # Plant Category
+    bil_haif: Optional[str] = None               # Number of Hives (AM-specific)
+    luas_ladang: Optional[str] = None            # Farm Area
+    tahun_pensijilan: Optional[str] = None       # Certification Year
+    tarikh_pensijilan: Optional[str] = None      # Certification Date
+    tempoh_sah_laku: Optional[str] = None        # Validity Period/Expiry Date
+
+class OrganicRecord(BaseModel):
+    no_pensijilan: Optional[str] = None          # Certification Number
+    kategori_pemohon: Optional[str] = None       # Applicant Category
+    nama: Optional[str] = None                   # Name
+    negeri: Optional[str] = None                 # State
+    daerah: Optional[str] = None                 # District
+    jenis_tanaman: Optional[str] = None          # Plant Type
+    kategori_komoditi: Optional[str] = None      # Commodity Category
+    kategori_tanaman: Optional[str] = None       # Plant Category
+    luas_ladang: Optional[str] = None            # Farm Area
+    tahun_pensijilan: Optional[str] = None       # Certification Year
+    tarikh_pensijilan: Optional[str] = None      # Certification Date
+    tempoh_sah_laku: Optional[str] = None        # Validity Period/Expiry Date
+
+class TanamanRecord(BaseModel):
+    no_pensijilan: Optional[str] = None          # Certification Number
+    kategori_pemohon: Optional[str] = None       # Applicant Category
+    nama: Optional[str] = None                   # Name
+    negeri: Optional[str] = None                 # State
+    daerah: Optional[str] = None                 # District
+    jenis_tanaman: Optional[str] = None          # Plant Type
+    kategori_komoditi: Optional[str] = None      # Commodity Category
+    kategori_tanaman: Optional[str] = None       # Plant Category
+    luas_ladang: Optional[str] = None            # Farm Area
+    tahun_pensijilan: Optional[str] = None       # Certification Year
+    tarikh_pensijilan: Optional[str] = None      # Certification Date
+    tempoh_sah_laku: Optional[str] = None        # Validity Period/Expiry Date
+
+# Response models for each type
+class TBMResponse(BaseModel):
     success: bool
     message: str
     total_records: int
     timestamp: str
-    data: List[MyGAPRecord]
+    data: List[TBMRecord]
+
+class PFResponse(BaseModel):
+    success: bool
+    message: str
+    total_records: int
+    timestamp: str
+    data: List[PFRecord]
+
+class AMResponse(BaseModel):
+    success: bool
+    message: str
+    total_records: int
+    timestamp: str
+    data: List[AMRecord]
+
+class OrganicResponse(BaseModel):
+    success: bool
+    message: str
+    total_records: int
+    timestamp: str
+    data: List[OrganicRecord]
+
+class TanamanResponse(BaseModel):
+    success: bool
+    message: str
+    total_records: int
+    timestamp: str
+    data: List[TanamanRecord]
 
 class FieldStats(BaseModel):
     field_name: str
@@ -80,7 +164,7 @@ async def root():
         }
     }
 
-@app.get("/mygap/data/tbm", response_model=MyGAPResponse)
+@app.get("/mygap/data/tbm", response_model=TBMResponse)
 async def get_mygap_data():
     """
     Fetch MyGAP certification data - reads from JSON file first, 
@@ -138,13 +222,13 @@ async def get_mygap_data():
         # Convert raw data to Pydantic models
         records = []
         for item in raw_data:
-            # Remove the 'projek' field if it exists since we renamed it to 'kategori_pemohon'
-            cleaned_item = {k: v for k, v in item.items() if k != 'projek'}
-            record = MyGAPRecord(**cleaned_item)
+            # Create record with only fields that exist in TBMRecord
+            cleaned_item = {k: v for k, v in item.items() if k in TBMRecord.model_fields}
+            record = TBMRecord(**cleaned_item)
             records.append(record)
         
         message = f"Successfully loaded {len(records)} MyGAP certification records from {data_source}"
-        response = MyGAPResponse(
+        response = TBMResponse(
             success=True,
             message=message,
             total_records=len(records),
@@ -162,7 +246,7 @@ async def get_mygap_data():
             detail=f"Internal server error: {str(e)}"
         )
     
-@app.get("/mygap/data/pf", response_model=MyGAPResponse)
+@app.get("/mygap/data/pf", response_model=PFResponse)
 async def get_mygap_pf_data():
     """
     Fetch MyGAP PF (Plantation Forestry) certification data - reads from JSON file first, 
@@ -220,13 +304,13 @@ async def get_mygap_pf_data():
         # Convert raw data to Pydantic models
         records = []
         for item in raw_data:
-            # Remove the 'projek' field if it exists since we renamed it to 'kategori_pemohon'
-            cleaned_item = {k: v for k, v in item.items() if k != 'projek'}
-            record = MyGAPRecord(**cleaned_item)
+            # Create record with only fields that exist in PFRecord
+            cleaned_item = {k: v for k, v in item.items() if k in PFRecord.model_fields}
+            record = PFRecord(**cleaned_item)
             records.append(record)
         
         message = f"Successfully loaded {len(records)} MyGAP certification records from {data_source}"
-        response = MyGAPResponse(
+        response = PFResponse(
             success=True,
             message=message,
             total_records=len(records),
@@ -244,7 +328,7 @@ async def get_mygap_pf_data():
             detail=f"Internal server error: {str(e)}"
         )
 
-@app.get("/mygap/data/am", response_model=MyGAPResponse)
+@app.get("/mygap/data/am", response_model=AMResponse)
 async def get_mygap_am_data():
     """
     Fetch MyGAP AM (Apiary Management) certification data - reads from JSON file first, 
@@ -302,13 +386,13 @@ async def get_mygap_am_data():
         # Convert raw data to Pydantic models
         records = []
         for item in raw_data:
-            # Remove the 'projek' field if it exists since we renamed it to 'kategori_pemohon'
-            cleaned_item = {k: v for k, v in item.items() if k != 'projek'}
-            record = MyGAPRecord(**cleaned_item)
+            # Create record with only fields that exist in AMRecord
+            cleaned_item = {k: v for k, v in item.items() if k in AMRecord.model_fields}
+            record = AMRecord(**cleaned_item)
             records.append(record)
         
         message = f"Successfully loaded {len(records)} MyGAP AM certification records from {data_source}"
-        response = MyGAPResponse(
+        response = AMResponse(
             success=True,
             message=message,
             total_records=len(records),
@@ -326,7 +410,7 @@ async def get_mygap_am_data():
             detail=f"Internal server error: {str(e)}"
         )
 
-@app.get("/mygap/data/organic", response_model=MyGAPResponse)
+@app.get("/mygap/data/organic", response_model=OrganicResponse)
 async def get_mygap_organic_data():
     """
     Fetch MyGAP Organic certification data - reads from JSON file first, 
@@ -384,13 +468,13 @@ async def get_mygap_organic_data():
         # Convert raw data to Pydantic models
         records = []
         for item in raw_data:
-            # Remove the 'projek' field if it exists since we renamed it to 'kategori_pemohon'
-            cleaned_item = {k: v for k, v in item.items() if k != 'projek'}
-            record = MyGAPRecord(**cleaned_item)
+            # Create record with only fields that exist in OrganicRecord
+            cleaned_item = {k: v for k, v in item.items() if k in OrganicRecord.model_fields}
+            record = OrganicRecord(**cleaned_item)
             records.append(record)
         
         message = f"Successfully loaded {len(records)} MyGAP Organic certification records from {data_source}"
-        response = MyGAPResponse(
+        response = OrganicResponse(
             success=True,
             message=message,
             total_records=len(records),
@@ -408,7 +492,7 @@ async def get_mygap_organic_data():
             detail=f"Internal server error: {str(e)}"
         )
 
-@app.get("/mygap/data/tanaman", response_model=MyGAPResponse)
+@app.get("/mygap/data/tanaman", response_model=TanamanResponse)
 async def get_mygap_tanaman_data():
     """
     Fetch MyGAP Tanaman certification data - reads from JSON file first, 
@@ -466,13 +550,13 @@ async def get_mygap_tanaman_data():
         # Convert raw data to Pydantic models
         records = []
         for item in raw_data:
-            # Remove the 'projek' field if it exists since we renamed it to 'kategori_pemohon'
-            cleaned_item = {k: v for k, v in item.items() if k != 'projek'}
-            record = MyGAPRecord(**cleaned_item)
+            # Create record with only fields that exist in TanamanRecord
+            cleaned_item = {k: v for k, v in item.items() if k in TanamanRecord.model_fields}
+            record = TanamanRecord(**cleaned_item)
             records.append(record)
         
         message = f"Successfully loaded {len(records)} MyGAP Tanaman certification records from {data_source}"
-        response = MyGAPResponse(
+        response = TanamanResponse(
             success=True,
             message=message,
             total_records=len(records),
