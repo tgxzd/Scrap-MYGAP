@@ -9,7 +9,7 @@ import os
 import glob
 
 # Import our scraping functions
-from scrap_pf import extract_mygap_pf_data, DATA_FIELDS
+from scrap_tbm import extract_mygap_tbm_data, DATA_FIELDS
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -23,9 +23,9 @@ app = FastAPI(
 )
 
 # Pydantic models for API responses
-class MyGAPRecord(BaseModel):
+class MyGAPRecordTBM(BaseModel):
     no_pensijilan: Optional[str] = None          # Certification Number
-    projek: Optional[str] = None                 # Applicant Category
+    projek: Optional[str] = None       # Applicant Category
     nama: Optional[str] = None                   # Name
     negeri: Optional[str] = None                 # State
     daerah: Optional[str] = None                 # District
@@ -42,7 +42,7 @@ class MyGAPResponse(BaseModel):
     message: str
     total_records: int
     timestamp: str
-    data: List[MyGAPRecord]
+    data: List[MyGAPRecordTBM]
 
 class FieldStats(BaseModel):
     field_name: str
@@ -71,7 +71,7 @@ async def root():
         }
     }
 
-@app.get("/mygap/data/pf", response_model=MyGAPResponse)
+@app.get("/mygap/data/tbm", response_model=MyGAPResponse)
 async def get_mygap_data():
     """
     Fetch MyGAP certification data - reads from JSON file first, 
@@ -86,7 +86,7 @@ async def get_mygap_data():
         data_source = "cache"
         
         # Find the most recent JSON file
-        json_files = glob.glob("mygap_data_*.json")
+        json_files = glob.glob("mygap_data_tbm*.json")
         if json_files:
             # Sort by modification time, get the newest
             latest_file = max(json_files, key=os.path.getmtime)
@@ -116,7 +116,7 @@ async def get_mygap_data():
         # If no valid cached data, extract from website
         if raw_data is None:
             logger.info("Fetching fresh data from MyGAP website...")
-            raw_data = extract_mygap_pf_data(save_to_file=True)  # Save fresh data to file
+            raw_data = extract_mygap_tbm_data(save_to_file=True)  # Save fresh data to file
             data_source = "fresh"
             
             if raw_data is None:
@@ -129,7 +129,7 @@ async def get_mygap_data():
         # Convert raw data to Pydantic models
         records = []
         for item in raw_data:
-            record = MyGAPRecord(**item)
+            record = MyGAPRecordTBM(**item)
             records.append(record)
         
         message = f"Successfully loaded {len(records)} MyGAP certification records from {data_source}"
@@ -163,7 +163,7 @@ async def get_mygap_stats():
         logger.info("Extracting MyGAP data for statistics...")
         
         # Extract data using our scraping function
-        raw_data = extract_mygap_pf_data(save_to_file=False)
+        raw_data = extract_mygap_tbm_data(save_to_file=False)
         
         if raw_data is None:
             logger.error("Failed to extract data from MyGAP website")
@@ -218,7 +218,7 @@ async def download_json():
         logger.info("Preparing JSON download...")
         
         # Extract data
-        raw_data = extract_mygap_pf_data(save_to_file=False)
+        raw_data = extract_mygap_tbm_data(save_to_file=False)
         
         if raw_data is None:
             raise HTTPException(
