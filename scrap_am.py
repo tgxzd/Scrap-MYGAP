@@ -65,7 +65,7 @@ def extract_mygap_am_data(save_to_file=True):
     print("Fetching data from MyGAP AM website...")
     
     # 1. Get the page
-    response = requests.get('https://carianmygapmyorganic.doa.gov.my/mygap_am_list.php?pagesize=500')
+    response = requests.get('https://carianmygapmyorganic.doa.gov.my/mygap_am_list.php?pagesize=-1')
     
     if response.status_code != 200:
         print(f"Error fetching page: {response.status_code}")
@@ -140,13 +140,28 @@ def extract_mygap_am_data(save_to_file=True):
                         cell_data = get_full_text_from_dialog(cells[col_index])
                     else:
                         cell_data = cells[col_index].get_text(strip=True)
-                    row_data[field] = cell_data
+                    
+                    # Rename 'projek' field to 'kategori_pemohon' for JSON output
+                    if field == 'projek':
+                        row_data['kategori_pemohon'] = cell_data
+                        # Don't add 'projek' to row_data
+                    else:
+                        row_data[field] = cell_data
+                    
                     if cell_data:  # Check if there's actual data
                         has_data = True
                 else:
-                    row_data[field] = ""
+                    if field == 'projek':
+                        row_data['kategori_pemohon'] = ""
+                        # Don't add 'projek' to row_data
+                    else:
+                        row_data[field] = ""
             else:
-                row_data[field] = ""
+                if field == 'projek':
+                    row_data['kategori_pemohon'] = ""
+                    # Don't add 'projek' to row_data
+                else:
+                    row_data[field] = ""
         
         # Only add rows that have a certification number
         if has_data and row_data['no_pensijilan'].strip():
@@ -168,10 +183,18 @@ def save_data(data, format='both'):
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
+    # Create the actual field names used in the output data
+    output_fields = []
+    for field in DATA_FIELDS:
+        if field == 'projek':
+            output_fields.append('kategori_pemohon')
+        else:
+            output_fields.append(field)
+    
     if format in ['csv', 'both']:
         csv_filename = f"mygap_data_am_{timestamp}.csv"
         with open(csv_filename, 'w', newline='', encoding='utf-8') as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=DATA_FIELDS)
+            writer = csv.DictWriter(csvfile, fieldnames=output_fields)
             writer.writeheader()
             writer.writerows(data)
         print(f"Data saved to {csv_filename}")
@@ -185,7 +208,7 @@ def save_data(data, format='both'):
                 "extracted_at": datetime.now().isoformat(),
                 "timestamp": timestamp,
                 "total_records": len(data),
-                "fields": DATA_FIELDS
+                "fields": output_fields
             },
             "data": data
         }
@@ -228,10 +251,14 @@ if __name__ == "__main__":
         print(f"\n=== SUMMARY ===")
         print(f"Total records extracted: {len(mygap_data)}")
         
-        # Count non-empty values for each field
+        # Count non-empty values for each field (using actual output field names)
         field_counts = {}
         for field in DATA_FIELDS:
-            field_counts[field] = sum(1 for record in mygap_data if record.get(field, '').strip())
+            if field == 'projek':
+                output_field = 'kategori_pemohon'
+            else:
+                output_field = field
+            field_counts[output_field] = sum(1 for record in mygap_data if record.get(output_field, '').strip())
         
         print("\nField completion rates:")
         for field, count in field_counts.items():

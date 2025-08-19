@@ -26,15 +26,12 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Pydantic models for API responses
+# Pydantic models for API responses - Universal model with kategori_pemohon (no projek)
 class MyGAPRecord(BaseModel):
     no_pensijilan: Optional[str] = None          # Certification Number
-    # PF-specific fields
-    projek: Optional[str] = None                 # Project 
+    kategori_pemohon: Optional[str] = None       # Applicant Category (renamed from projek for all data)
     jenis_tanaman: Optional[str] = None          # Plant Type 
-    # AM-specific fields  
-    jenis_tanaman: Optional[str] = None            # Bee Type 
-    bil_haif: Optional[str] = None               # Number of Hives
+    bil_haif: Optional[str] = None               # Number of Hives (AM-specific)
     # Common fields
     nama: Optional[str] = None                   # Name
     negeri: Optional[str] = None                 # State
@@ -141,7 +138,9 @@ async def get_mygap_data():
         # Convert raw data to Pydantic models
         records = []
         for item in raw_data:
-            record = MyGAPRecord(**item)
+            # Remove the 'projek' field if it exists since we renamed it to 'kategori_pemohon'
+            cleaned_item = {k: v for k, v in item.items() if k != 'projek'}
+            record = MyGAPRecord(**cleaned_item)
             records.append(record)
         
         message = f"Successfully loaded {len(records)} MyGAP certification records from {data_source}"
@@ -221,7 +220,9 @@ async def get_mygap_pf_data():
         # Convert raw data to Pydantic models
         records = []
         for item in raw_data:
-            record = MyGAPRecord(**item)
+            # Remove the 'projek' field if it exists since we renamed it to 'kategori_pemohon'
+            cleaned_item = {k: v for k, v in item.items() if k != 'projek'}
+            record = MyGAPRecord(**cleaned_item)
             records.append(record)
         
         message = f"Successfully loaded {len(records)} MyGAP certification records from {data_source}"
@@ -301,7 +302,9 @@ async def get_mygap_am_data():
         # Convert raw data to Pydantic models
         records = []
         for item in raw_data:
-            record = MyGAPRecord(**item)
+            # Remove the 'projek' field if it exists since we renamed it to 'kategori_pemohon'
+            cleaned_item = {k: v for k, v in item.items() if k != 'projek'}
+            record = MyGAPRecord(**cleaned_item)
             records.append(record)
         
         message = f"Successfully loaded {len(records)} MyGAP AM certification records from {data_source}"
@@ -381,7 +384,9 @@ async def get_mygap_organic_data():
         # Convert raw data to Pydantic models
         records = []
         for item in raw_data:
-            record = MyGAPRecord(**item)
+            # Remove the 'projek' field if it exists since we renamed it to 'kategori_pemohon'
+            cleaned_item = {k: v for k, v in item.items() if k != 'projek'}
+            record = MyGAPRecord(**cleaned_item)
             records.append(record)
         
         message = f"Successfully loaded {len(records)} MyGAP Organic certification records from {data_source}"
@@ -461,7 +466,9 @@ async def get_mygap_tanaman_data():
         # Convert raw data to Pydantic models
         records = []
         for item in raw_data:
-            record = MyGAPRecord(**item)
+            # Remove the 'projek' field if it exists since we renamed it to 'kategori_pemohon'
+            cleaned_item = {k: v for k, v in item.items() if k != 'projek'}
+            record = MyGAPRecord(**cleaned_item)
             records.append(record)
         
         message = f"Successfully loaded {len(records)} MyGAP Tanaman certification records from {data_source}"
@@ -508,12 +515,17 @@ async def get_mygap_stats():
         field_stats = []
         total_records = len(raw_data)
         
+        # Use the output field names (kategori_pemohon instead of projek)
         for field in PF_DATA_FIELDS:
-            completed_count = sum(1 for record in raw_data if record.get(field, '').strip())
+            if field == 'projek':
+                output_field = 'kategori_pemohon'
+            else:
+                output_field = field
+            completed_count = sum(1 for record in raw_data if record.get(output_field, '').strip())
             completion_percentage = (completed_count / total_records * 100) if total_records > 0 else 0
             
             stat = FieldStats(
-                field_name=field,
+                field_name=output_field,
                 completed_count=completed_count,
                 total_count=total_records,
                 completion_percentage=round(completion_percentage, 1)
@@ -567,7 +579,7 @@ async def download_json():
                 "metadata": {
                     "extracted_at": datetime.now().isoformat(),
                     "total_records": len(raw_data),
-                    "fields": PF_DATA_FIELDS
+                    "fields": [field if field != 'projek' else 'kategori_pemohon' for field in PF_DATA_FIELDS]
                 },
                 "data": raw_data
             },
@@ -608,12 +620,20 @@ async def download_json():
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"mygap_data_{timestamp}.json"
         
+        # Create the actual field names used in the AM output data
+        am_output_fields = []
+        for field in AM_DATA_FIELDS:
+            if field == 'projek':
+                am_output_fields.append('kategori_pemohon')
+            else:
+                am_output_fields.append(field)
+        
         return JSONResponse(
             content={
                 "metadata": {
                     "extracted_at": datetime.now().isoformat(),
                     "total_records": len(raw_data),
-                    "fields": PF_DATA_FIELDS
+                    "fields": am_output_fields
                 },
                 "data": raw_data
             },
@@ -659,7 +679,7 @@ async def download_json():
                 "metadata": {
                     "extracted_at": datetime.now().isoformat(),
                     "total_records": len(raw_data),
-                    "fields": PF_DATA_FIELDS
+                    "fields": [field if field != 'projek' else 'kategori_pemohon' for field in PF_DATA_FIELDS]
                 },
                 "data": raw_data
             },
@@ -705,7 +725,7 @@ async def download_json():
                 "metadata": {
                     "extracted_at": datetime.now().isoformat(),
                     "total_records": len(raw_data),
-                    "fields": PF_DATA_FIELDS
+                    "fields": [field if field != 'projek' else 'kategori_pemohon' for field in PF_DATA_FIELDS]
                 },
                 "data": raw_data
             },
@@ -751,7 +771,7 @@ async def download_json():
                 "metadata": {
                     "extracted_at": datetime.now().isoformat(),
                     "total_records": len(raw_data),
-                    "fields": PF_DATA_FIELDS
+                    "fields": [field if field != 'projek' else 'kategori_pemohon' for field in PF_DATA_FIELDS]
                 },
                 "data": raw_data
             },
