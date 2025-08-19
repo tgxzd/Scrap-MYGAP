@@ -6,7 +6,7 @@ from datetime import datetime
 
 DATA_FIELDS = [
     'no_pensijilan',      # Certification Number
-    'kategori_pemohon',   # Applicant Category
+    'projek',   # Applicant Category
     'nama',               # Name
     'negeri',             # State
     'daerah',             # District

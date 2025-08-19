@@ -25,13 +25,60 @@ app = FastAPI(
 )
 
 # Pydantic models for API responses
-class MyGAPRecord(BaseModel):
+class MyGAPRecord_PF(BaseModel):
+    """MyGAP Plant & Fresh certification record model"""
     no_pensijilan: Optional[str] = None          # Certification Number
-    # PF-specific fields
     projek: Optional[str] = None                 # Project 
+    nama: Optional[str] = None                   # Name
+    negeri: Optional[str] = None                 # State
+    daerah: Optional[str] = None                 # District
+    jenis_tanaman: Optional[str] = None          # Plant Type
+    kategori_komoditi: Optional[str] = None      # Commodity Category
+    kategori_tanaman: Optional[str] = None       # Plant Category
+    luas_ladang: Optional[str] = None            # Farm Area (Ha)
+    tahun_pensijilan: Optional[str] = None       # Certification Year
+    tarikh_pensijilan: Optional[str] = None      # Certification Date
+    tempoh_sah_laku: Optional[str] = None        # Expiry Date
+
+class MyGAPRecord_AM(BaseModel):
+    """MyGAP Apiary Management certification record model"""
+    no_pensijilan: Optional[str] = None          # Certification Number
+    projek: Optional[str] = None       # Applicant Category
+    nama: Optional[str] = None                   # Name
+    negeri: Optional[str] = None                 # State
+    daerah: Optional[str] = None                 # District
+    jenis_lebah: Optional[str] = None            # Bee Type
+    kategori_komoditi: Optional[str] = None      # Commodity Category
+    kategori_tanaman: Optional[str] = None       # Plant Category
+    bil_haif: Optional[str] = None               # Number of Hives
+    luas_ladang: Optional[str] = None            # Farm Area (Ha)
+    tahun_pensijilan: Optional[str] = None       # Certification Year
+    tarikh_pensijilan: Optional[str] = None      # Certification Date
+    tempoh_sah_laku: Optional[str] = None        # Validity Period/Expiry Date
+
+class MyGAPRecord_Organic(BaseModel):
+    """MyGAP Organic certification record model"""
+    no_pensijilan: Optional[str] = None          # Certification Number
+    projek: Optional[str] = None       # Applicant Category
+    nama: Optional[str] = None                   # Name
+    negeri: Optional[str] = None                 # State
+    daerah: Optional[str] = None                 # District
+    jenis_tanaman: Optional[str] = None          # Plant Type
+    kategori_komoditi: Optional[str] = None      # Commodity Category
+    kategori_tanaman: Optional[str] = None       # Plant Category
+    luas_ladang: Optional[str] = None            # Farm Area (Ha)
+    tahun_pensijilan: Optional[str] = None       # Certification Year
+    tarikh_pensijilan: Optional[str] = None      # Certification Date
+    tempoh_sah_laku: Optional[str] = None        # Validity Period/Expiry Date
+
+# Keep the original generic model for backward compatibility
+class MyGAPRecord(BaseModel):
+    """Generic MyGAP record model for backward compatibility"""
+    no_pensijilan: Optional[str] = None          # Certification Number
+    # Common fields across different certification types
+    kategori_pemohon: Optional[str] = None       # Applicant Category 
     jenis_tanaman: Optional[str] = None          # Plant Type 
     # AM-specific fields  
-    kategori_pemohon: Optional[str] = None       # Applicant Category 
     jenis_lebah: Optional[str] = None            # Bee Type 
     bil_haif: Optional[str] = None               # Number of Hives
     # Common fields
@@ -45,6 +92,28 @@ class MyGAPRecord(BaseModel):
     tarikh_pensijilan: Optional[str] = None      # Certification Date
     tempoh_sah_laku: Optional[str] = None        # Validity Period/Expiry Date
 
+class MyGAPResponse_PF(BaseModel):
+    success: bool
+    message: str
+    total_records: int
+    timestamp: str
+    data: List[MyGAPRecord_PF]
+
+class MyGAPResponse_AM(BaseModel):
+    success: bool
+    message: str
+    total_records: int
+    timestamp: str
+    data: List[MyGAPRecord_AM]
+
+class MyGAPResponse_Organic(BaseModel):
+    success: bool
+    message: str
+    total_records: int
+    timestamp: str
+    data: List[MyGAPRecord_Organic]
+
+# Keep the original generic response model for backward compatibility
 class MyGAPResponse(BaseModel):
     success: bool
     message: str
@@ -81,8 +150,8 @@ async def root():
         }
     }
 
-@app.get("/mygap/data/pf", response_model=MyGAPResponse)
-async def get_mygap_data():
+@app.get("/mygap/data/pf", response_model=MyGAPResponse_PF)
+async def get_mygap_pf_data():
     """
     Fetch MyGAP certification data - reads from JSON file first, 
     only fetches new data if file is older than 1 day
@@ -139,11 +208,11 @@ async def get_mygap_data():
         # Convert raw data to Pydantic models
         records = []
         for item in raw_data:
-            record = MyGAPRecord(**item)
+            record = MyGAPRecord_PF(**item)
             records.append(record)
         
-        message = f"Successfully loaded {len(records)} MyGAP certification records from {data_source}"
-        response = MyGAPResponse(
+        message = f"Successfully loaded {len(records)} MyGAP PF certification records from {data_source}"
+        response = MyGAPResponse_PF(
             success=True,
             message=message,
             total_records=len(records),
@@ -161,7 +230,7 @@ async def get_mygap_data():
             detail=f"Internal server error: {str(e)}"
         )
 
-@app.get("/mygap/data/am", response_model=MyGAPResponse)
+@app.get("/mygap/data/am", response_model=MyGAPResponse_AM)
 async def get_mygap_am_data():
     """
     Fetch MyGAP AM (Apiary Management) certification data - reads from JSON file first, 
@@ -219,11 +288,11 @@ async def get_mygap_am_data():
         # Convert raw data to Pydantic models
         records = []
         for item in raw_data:
-            record = MyGAPRecord(**item)
+            record = MyGAPRecord_AM(**item)
             records.append(record)
         
         message = f"Successfully loaded {len(records)} MyGAP AM certification records from {data_source}"
-        response = MyGAPResponse(
+        response = MyGAPResponse_AM(
             success=True,
             message=message,
             total_records=len(records),
@@ -241,7 +310,7 @@ async def get_mygap_am_data():
             detail=f"Internal server error: {str(e)}"
         )
 
-@app.get("/mygap/data/organic", response_model=MyGAPResponse)
+@app.get("/mygap/data/organic", response_model=MyGAPResponse_Organic)
 async def get_mygap_organic_data():
     """
     Fetch MyGAP Organic certification data - reads from JSON file first, 
@@ -299,11 +368,11 @@ async def get_mygap_organic_data():
         # Convert raw data to Pydantic models
         records = []
         for item in raw_data:
-            record = MyGAPRecord(**item)
+            record = MyGAPRecord_Organic(**item)
             records.append(record)
         
         message = f"Successfully loaded {len(records)} MyGAP Organic certification records from {data_source}"
-        response = MyGAPResponse(
+        response = MyGAPResponse_Organic(
             success=True,
             message=message,
             total_records=len(records),
