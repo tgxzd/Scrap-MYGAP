@@ -6,11 +6,11 @@ from datetime import datetime
 
 DATA_FIELDS = [
     'no_pensijilan',      # Certification Number
-    'kategori_pemohon',   # Applicant Category  
+    'projek',   # Applicant Category  
     'nama',               # Name
     'negeri',             # State
     'daerah',             # District
-    'jenis_lebah',        # Bee Type
+    'jenis_tanaman',        # Bee Type
     'kategori_komoditi',  # Commodity Category
     'kategori_tanaman',   # Plant Category
     'bil_haif',           # Number of Hives
@@ -19,6 +19,46 @@ DATA_FIELDS = [
     'tarikh_pensijilan',  # Certification Date
     'tempoh_sah_laku',    # Validity Period/Expiry Date
 ]
+
+def get_full_text_from_dialog(cell):
+    """Extract complete bee/plant information from a table cell"""
+    # First get the visible text
+    visible_text = cell.get_text(strip=True)
+    
+    # Check if there's a "More..." link
+    more_link = cell.find('a', {'data-gridlink': True})
+    if more_link and 'More' in visible_text:
+        # Get the text before "More..."
+        main_text = visible_text.split('More')[0].strip()
+        
+        # Get the data from the data-query attribute
+        query_data = more_link.get('data-query', '')
+        if query_data and 'key1=' in query_data:
+            try:
+                # Make a request to get the full list
+                key_id = query_data.split('key1=')[1].split('&')[0]
+                full_info_url = f'https://carianmygapmyorganic.doa.gov.my/fulltext.php?pagetype=list&table=mygap_am&field=jenis_tanaman&key1={key_id}&page=list2'
+                
+                response = requests.get(full_info_url)
+                if response.status_code == 200:
+                    soup = BeautifulSoup(response.content, 'html.parser')
+                    # The full text is typically in a div or span
+                    full_text = soup.get_text(strip=True)
+                    
+                    # Try to parse as JSON and extract just the content
+                    try:
+                        json_data = json.loads(full_text)
+                        if isinstance(json_data, dict) and 'textCont' in json_data:
+                            return json_data['textCont']
+                    except json.JSONDecodeError:
+                        pass
+                    
+                    return full_text if full_text else main_text
+            except Exception as e:
+                print(f"Error fetching full info: {e}")
+                return main_text
+        return main_text
+    return visible_text
 
 def extract_mygap_am_data(save_to_file=True):
     """Extract all available data from MyGAP AM (Apiary Management) certification table"""
@@ -95,7 +135,11 @@ def extract_mygap_am_data(save_to_file=True):
             if field in field_to_col_map:
                 col_index = field_to_col_map[field]
                 if len(cells) > col_index:
-                    cell_data = cells[col_index].get_text(strip=True)
+                    # Special handling for jenis_tanaman field
+                    if field == 'jenis_tanaman':
+                        cell_data = get_full_text_from_dialog(cells[col_index])
+                    else:
+                        cell_data = cells[col_index].get_text(strip=True)
                     row_data[field] = cell_data
                     if cell_data:  # Check if there's actual data
                         has_data = True
@@ -104,8 +148,8 @@ def extract_mygap_am_data(save_to_file=True):
             else:
                 row_data[field] = ""
         
-        # Only add rows that have at least some data
-        if has_data:
+        # Only add rows that have a certification number
+        if has_data and row_data['no_pensijilan'].strip():
             extracted_data.append(row_data)
     
     print(f"\nExtracted {len(extracted_data)} records")

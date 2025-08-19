@@ -111,43 +111,41 @@ def get_full_text_from_dialog(session, more_link_url, base_url):
     try:
         # Construct the full URL for the dialog content
         if more_link_url.startswith('fulltext.php'):
-            full_url = urljoin(base_url, more_link_url)
+            if 'mygap_pf' in more_link_url:  # Handle PF-specific URLs
+                full_url = urljoin(base_url, more_link_url)
+            else:
+                # Modify URL for PF data if needed
+                parts = parse_qs(urlparse(more_link_url).query)
+                key_id = parts.get('key1', [''])[0]
+                full_url = urljoin(base_url, 
+                    f'fulltext.php?pagetype=list&table=mygap_pf&field=jenis_tanaman&key1={key_id}&page=list1')
         else:
             full_url = more_link_url
             
         print(f"  Fetching full content from: {full_url}")
         
-        # Removed unnecessary delay - using persistent session instead
-        
-        response = session.get(full_url, timeout=10)  # Add timeout
+        response = session.get(full_url, timeout=10)
         if response.status_code == 200:
             try:
-                # The response is HTML-encoded JSON format: {"success":true,"textCont":"FULL_CONTENT"}
-                # First decode HTML entities
+                # Handle HTML-encoded JSON response
                 decoded_content = html.unescape(response.text)
                 json_response = json.loads(decoded_content)
                 if json_response.get('success') and 'textCont' in json_response:
                     content = json_response['textCont']
-                    # Clean up HTML tags and entities
-                    content = re.sub(r'<br\s*/?>', ', ', content)  # Replace <br> with commas
-                    content = re.sub(r'<[^>]+>', '', content)      # Remove any other HTML tags
-                    content = content.replace('\\n', ', ').replace('\n', ', ')  # Replace newlines
-                    content = re.sub(r',\s*,', ',', content)       # Remove duplicate commas
-                    content = re.sub(r',\s*$', '', content)        # Remove trailing comma
-                    content = content.strip()
-                    return content
-                else:
-                    print(f"  Unexpected JSON structure: {json_response}")
-                    return None
+                    # Clean up content
+                    content = re.sub(r'<br\s*/?>', ', ', content)
+                    content = re.sub(r'<[^>]+>', '', content)
+                    content = content.replace('\\n', ', ').replace('\n', ', ')
+                    content = re.sub(r',\s*,', ',', content)
+                    content = re.sub(r',\s*$', '', content)
+                    return content.strip()
             except json.JSONDecodeError:
                 # Fallback to HTML parsing if not JSON
                 dialog_soup = BeautifulSoup(response.content, 'html.parser')
                 modal_body = dialog_soup.find('div', class_='modal-body')
                 if modal_body:
                     return modal_body.get_text(strip=True)
-                else:
-                    body_text = dialog_soup.get_text(strip=True)
-                    return body_text
+                return dialog_soup.get_text(strip=True)
         else:
             print(f"  Failed to fetch dialog content: {response.status_code}")
             return None
@@ -265,8 +263,7 @@ def extract_mygap_pf_data(save_to_file=True):
             else:
                 row_data[field] = ""
         
-        # Only add rows that have at least some data
-        if has_data:
+        if has_data and row_data['no_pensijilan'].strip():
             extracted_data.append(row_data)
     
     print(f"Phase 1 complete: {len(extracted_data)} records, {len(dialog_requests)} truncated fields found")
