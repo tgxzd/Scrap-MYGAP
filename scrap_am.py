@@ -18,4 +18,3 @@ DATA_FIELDS = [
     'tarikh_pensijilan',  # Certification Date
     'tempoh_sah_laku'     # Expiry Date
 ]
-
