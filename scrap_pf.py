@@ -1,4 +1,6 @@
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
 import csv
 import json
@@ -7,6 +9,8 @@ import time
 import re
 from urllib.parse import urljoin, parse_qs, urlparse
 import html
+from concurrent.futures import ThreadPoolExecutor
+import threading
 
 # Define the data fields we want to extract
 DATA_FIELDS = [
@@ -24,6 +28,84 @@ DATA_FIELDS = [
     'tempoh_sah_laku'     # Expiry Date
 ]
 
+def create_optimized_session():
+    """Create an optimized session with connection pooling and retry strategy"""
+    session = requests.Session()
+    
+    # Configure retry strategy
+    retry_strategy = Retry(
+        total=3,
+        backoff_factor=0.3,
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["HEAD", "GET", "OPTIONS"]
+    )
+    
+    # Configure HTTP adapter with connection pooling
+    adapter = HTTPAdapter(
+        max_retries=retry_strategy,
+        pool_connections=10,  # Number of connection pools to cache
+        pool_maxsize=20,      # Maximum number of connections to save in pool
+        pool_block=True       # Block when no free connections available
+    )
+    
+    # Mount adapter for both HTTP and HTTPS
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    
+    # Set common headers to appear more like a regular browser
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+    })
+    
+    return session
+
+def batch_fetch_full_content(session, dialog_requests, base_url, max_workers=5):
+    """Fetch multiple dialog contents in parallel with controlled concurrency"""
+    results = {}
+    
+    def fetch_single_dialog(request_info):
+        """Helper function for threading"""
+        field, url, row_index = request_info
+        try:
+            content = get_full_text_from_dialog(session, url, base_url)
+            return (row_index, field, content)
+        except Exception as e:
+            print(f"  Error in batch fetch for {field}: {str(e)}")
+            return (row_index, field, None)
+    
+    if not dialog_requests:
+        return results
+    
+    print(f"  Batch fetching {len(dialog_requests)} dialog contents with {max_workers} workers...")
+    
+    # Use ThreadPoolExecutor for controlled parallel requests
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all requests
+        future_to_request = {
+            executor.submit(fetch_single_dialog, req): req 
+            for req in dialog_requests
+        }
+        
+        # Collect results as they complete
+        for future in future_to_request:
+            try:
+                row_index, field, content = future.result(timeout=30)  # 30 second timeout per request
+                if content:
+                    if row_index not in results:
+                        results[row_index] = {}
+                    results[row_index][field] = content
+            except Exception as e:
+                request_info = future_to_request[future]
+                print(f"  Batch request failed for {request_info}: {str(e)}")
+    
+    print(f"  Batch fetch completed. Retrieved {len(results)} full contents.")
+    return results
+
 def get_full_text_from_dialog(session, more_link_url, base_url):
     """Extract full text from the dialog modal when 'More ...' is clicked"""
     try:
@@ -35,10 +117,9 @@ def get_full_text_from_dialog(session, more_link_url, base_url):
             
         print(f"  Fetching full content from: {full_url}")
         
-        # Add a small delay to be respectful
-        time.sleep(0.5)
+        # Removed unnecessary delay - using persistent session instead
         
-        response = session.get(full_url)
+        response = session.get(full_url, timeout=10)  # Add timeout
         if response.status_code == 200:
             try:
                 # The response is HTML-encoded JSON format: {"success":true,"textCont":"FULL_CONTENT"}
@@ -76,11 +157,11 @@ def get_full_text_from_dialog(session, more_link_url, base_url):
         return None
 
 def extract_mygap_pf_data(save_to_file=True):
-    """Extract all available data from MyGAP certification table"""
-    print("Fetching data from MyGAP website...")
+    """Extract all available data from MyGAP certification table with optimized session handling"""
+    print("Fetching data from MyGAP website with optimized session...")
     
-    # Create a session to maintain cookies and handle multiple requests
-    session = requests.Session()
+    # Create optimized session with connection pooling and retry strategy
+    session = create_optimized_session()
     base_url = 'https://carianmygapmyorganic.doa.gov.my/'
     
     # 1. Get the page with pagesize=-1 to get all records
@@ -138,10 +219,13 @@ def extract_mygap_pf_data(save_to_file=True):
     for field in field_to_col_map:
         print(f"  - {field}")
     
-    # Extract data from all rows after the header
+    # Phase 1: Extract basic data and collect "More..." requests
     extracted_data = []
+    dialog_requests = []  # [(field, url, row_index), ...]
     
-    for row in rows[header_row_index + 1:]:
+    print("Phase 1: Extracting basic data and identifying truncated fields...")
+    
+    for row_index, row in enumerate(rows[header_row_index + 1:]):
         cells = row.find_all(['th', 'td'])
         if len(cells) == 0:
             continue
@@ -159,20 +243,14 @@ def extract_mygap_pf_data(save_to_file=True):
                     
                     # Check if this cell contains a "More ..." link for truncated content
                     if 'More' in cell_data and '...' in cell_data:
-                        print(f"Found truncated {field} field, fetching full content...")
-                        
                         # Look for the "More ..." link in the cell with data-query attribute
                         more_link = cell.find('a', attrs={'data-query': re.compile(r'fulltext\.php')})
                         if more_link:
                             # Extract the URL from data-query attribute or href
                             query_url = more_link.get('data-query') or more_link.get('href')
                             if query_url and query_url != 'javascript:void(0);':
-                                full_content = get_full_text_from_dialog(session, query_url, base_url)
-                                if full_content:
-                                    cell_data = full_content
-                                    print(f"  Successfully fetched full content: {cell_data[:100]}...")
-                                else:
-                                    print(f"  Failed to fetch full content, keeping truncated version")
+                                # Add to batch requests instead of fetching immediately
+                                dialog_requests.append((field, query_url, row_index))
                         else:
                             # Try to clean up the "More ..." suffix for better data quality
                             cell_data = re.sub(r'More\s*\.+$', '', cell_data).strip()
@@ -190,6 +268,25 @@ def extract_mygap_pf_data(save_to_file=True):
         # Only add rows that have at least some data
         if has_data:
             extracted_data.append(row_data)
+    
+    print(f"Phase 1 complete: {len(extracted_data)} records, {len(dialog_requests)} truncated fields found")
+    
+    # Phase 2: Batch fetch all "More..." content
+    if dialog_requests:
+        print("Phase 2: Batch fetching truncated content...")
+        batch_results = batch_fetch_full_content(session, dialog_requests, base_url, max_workers=3)
+        
+        # Phase 3: Update extracted data with full content
+        print("Phase 3: Integrating full content into extracted data...")
+        for row_index, field_contents in batch_results.items():
+            if row_index < len(extracted_data):
+                for field, full_content in field_contents.items():
+                    if full_content:
+                        extracted_data[row_index][field] = full_content
+                        print(f"  Updated {field} for record {row_index + 1}")
+    
+    # Close the session when done
+    session.close()
     
     print(f"\nExtracted {len(extracted_data)} records")
     
