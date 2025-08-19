@@ -9,7 +9,7 @@ import os
 import glob
 
 # Import our scraping functions
-from scrap import extract_mygap_data, DATA_FIELDS
+from scrap_pf import extract_mygap_pf_data, DATA_FIELDS
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -71,7 +71,7 @@ async def root():
         }
     }
 
-@app.get("/mygap/data", response_model=MyGAPResponse)
+@app.get("/mygap/data/pf", response_model=MyGAPResponse)
 async def get_mygap_data():
     """
     Fetch MyGAP certification data - reads from JSON file first, 
@@ -116,7 +116,7 @@ async def get_mygap_data():
         # If no valid cached data, extract from website
         if raw_data is None:
             logger.info("Fetching fresh data from MyGAP website...")
-            raw_data = extract_mygap_data(save_to_file=True)  # Save fresh data to file
+            raw_data = extract_mygap_pf_data(save_to_file=True)  # Save fresh data to file
             data_source = "fresh"
             
             if raw_data is None:
@@ -163,7 +163,7 @@ async def get_mygap_stats():
         logger.info("Extracting MyGAP data for statistics...")
         
         # Extract data using our scraping function
-        raw_data = extract_mygap_data(save_to_file=False)
+        raw_data = extract_mygap_pf_data(save_to_file=False)
         
         if raw_data is None:
             logger.error("Failed to extract data from MyGAP website")
@@ -218,7 +218,7 @@ async def download_json():
         logger.info("Preparing JSON download...")
         
         # Extract data
-        raw_data = extract_mygap_data(save_to_file=False)
+        raw_data = extract_mygap_pf_data(save_to_file=False)
         
         if raw_data is None:
             raise HTTPException(

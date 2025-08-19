@@ -20,7 +20,7 @@ DATA_FIELDS = [
     'tempoh_sah_laku'     # Expiry Date
 ]
 
-def extract_mygap_data(save_to_file=True):
+def extract_mygap_pf_data(save_to_file=True):
     """Extract all available data from MyGAP certification table"""
     print("Fetching data from MyGAP website...")
     
@@ -125,7 +125,7 @@ def save_data(data, format='both'):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
     if format in ['csv', 'both']:
-        csv_filename = f"mygap_data_{timestamp}.csv"
+        csv_filename = f"mygap_data_pf_{timestamp}.csv"
         with open(csv_filename, 'w', newline='', encoding='utf-8') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=DATA_FIELDS)
             writer.writeheader()
@@ -133,7 +133,7 @@ def save_data(data, format='both'):
         print(f"Data saved to {csv_filename}")
     
     if format in ['json', 'both']:
-        json_filename = f"mygap_data_{timestamp}.json"
+        json_filename = f"mygap_data_pf_{timestamp}.json"
         
         # Create structured JSON with metadata
         json_data = {
@@ -171,7 +171,7 @@ def display_sample_data(data, num_samples=5):
 # Main execution
 if __name__ == "__main__":
     # Extract the data
-    mygap_data = extract_mygap_data()
+    mygap_data = extract_mygap_pf_data()
     
     if mygap_data:
         # Display sample data
